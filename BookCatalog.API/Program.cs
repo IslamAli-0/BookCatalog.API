@@ -1,17 +1,26 @@
+using BookCatalog.API.Repositories;
+using BookCatalog.API.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+
+// MUST be Singleton so the Dictionary survives across HTTP requests.
+builder.Services.AddSingleton<IBookRepository, InMemoryBookRepository>();
+
+builder.Services.AddScoped<IBookService, BookService>();
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
