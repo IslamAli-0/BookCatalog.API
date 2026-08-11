@@ -29,3 +29,23 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
 * **Why:** A standard `List<T>` or `Dictionary<K,V>` is not thread-safe. In a web API where multiple requests can arrive simultaneously, standard collections cause race conditions or crash. `ConcurrentDictionary` prevents this.
 * **Async by Default:** The `IBookRepository` interface uses `Task` and `Task<T>` for all methods, using `Task.FromResult` in the in-memory implementation.
 * **Why:** This prepares the application for Week 3. When EF Core and a real database are introduced, the transition will be seamless. The Service and API layers are already built to handle asynchronous calls, meaning zero refactoring for upper layers.
+
+## Service Layer (Business Logic & Logging)
+* **Separation of Concerns:** Introduced a `BookService` layer to sit between the Controller and Repository. 
+* **Why:** Controllers should only handle HTTP routing and status codes. The Service layer handles mapping DTOs to Domain Models, enforcing any business rules, and interacting with the data store.
+* **Logging Strategy:** Injected `ILogger<BookService>` to track key operations.
+* **Why:** Fulfills the requirement to log key operations and errors. I used structured logging (e.g., `{BookId}`) rather than string interpolation (`$"{id}"`) so that modern log aggregators can index the variables correctly.
+
+
+
+
+
+
+
+
+
+## Extras
+* **Modern C# Features:** Used C# 12 Primary Constructors for Dependency Injection.
+* **Why:** It removes unnecessary boilerplate (declaring and assigning `readonly` fields) and keeps the class clean and focused on business logic.
+* **Mapping Strategy:** Used manual mapping via C# Extension Methods (`BookMapper.cs`) instead of an external library like AutoMapper.
+* **Why:** For a small domain, external mappers add unnecessary dependencies and reflection overhead. Extension methods keep the Service layer clean (`book.ToResponse()`), maintain high performance, and keep the mapping logic explicit and easy to debug.
