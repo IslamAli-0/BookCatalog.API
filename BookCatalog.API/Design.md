@@ -36,6 +36,15 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
 * **Logging Strategy:** Injected `ILogger<BookService>` to track key operations.
 * **Why:** Fulfills the requirement to log key operations and errors. I used structured logging (e.g., `{BookId}`) rather than string interpolation (`$"{id}"`) so that modern log aggregators can index the variables correctly.
 
+## API Layer and HTTP Behavior
+* **Thin Controllers:** The `BooksController` contains zero business logic. It delegates entirely to `IBookService`.
+* **Strict HTTP Status Codes:** 
+  * `200 OK` for successful reads and updates.
+  * `201 Created` via `CreatedAtAction` for POST requests, providing the `Location` header.
+  * `204 No Content` for successful DELETE operations.
+  * `404 Not Found` when requesting, updating, or deleting a non-existent ID.
+  * `400 Bad Request` is handled automatically by ASP.NET Core (`[ApiController]`) based on the DTO Data Annotations.
+* **Routing Constraints:** Used `{id:guid}` in the route templates to ensure the API immediately rejects invalid ID formats before hitting the service layer.
 
 
 
