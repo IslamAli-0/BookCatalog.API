@@ -46,7 +46,11 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
   * `400 Bad Request` is handled automatically by ASP.NET Core (`[ApiController]`) based on the DTO Data Annotations.
 * **Routing Constraints:** Used `{id:guid}` in the route templates to ensure the API immediately rejects invalid ID formats before hitting the service layer.
 
-
+## Dependency Injection
+* **Singleton Repository:** Registered `InMemoryBookRepository` as a `Singleton`.
+* **Why:** Since data is stored in a `ConcurrentDictionary`, a `Scoped` or `Transient` lifetime would destroy the dictionary at the end of every HTTP request. Singleton ensures the data persists while the application is running.
+* **Scoped Service:** Registered `BookService` as `Scoped`.
+* **Why:** This is the standard lifetime for business logic in web applications, keeping it isolated per HTTP request.
 
 
 
