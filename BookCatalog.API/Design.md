@@ -23,3 +23,9 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
 * **Why:** This ensures the API contract remains stable. When the database schema evolves in the coming weeks (e.g., adding audit fields like `CreatedAt` or internal flags like `IsDeleted`), those internal details won't leak to the client.
 * **Dynamic Validation (Custom Attributes):** Replaced the static `[Range]` attribute on `PublishYear` with a custom `[ValidPublishYear]` attribute.
 * **Why:** Hardcoding future years (like 2100) is a bad practice. The custom attribute dynamically checks the current year (`DateTime.UtcNow.Year + 1`), allowing for realistic historical dates and near-future pre-orders without requiring code updates every year.
+
+## Data Access Layer (Repositories)
+* **Thread-Safe In-Memory Store:** Implemented `InMemoryBookRepository` using a `ConcurrentDictionary<Guid, Book>`.
+* **Why:** A standard `List<T>` or `Dictionary<K,V>` is not thread-safe. In a web API where multiple requests can arrive simultaneously, standard collections cause race conditions or crash. `ConcurrentDictionary` prevents this.
+* **Async by Default:** The `IBookRepository` interface uses `Task` and `Task<T>` for all methods, using `Task.FromResult` in the in-memory implementation.
+* **Why:** This prepares the application for Week 3. When EF Core and a real database are introduced, the transition will be seamless. The Service and API layers are already built to handle asynchronous calls, meaning zero refactoring for upper layers.
