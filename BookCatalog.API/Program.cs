@@ -1,3 +1,4 @@
+using BookCatalog.API.Handlers;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Repositories;
@@ -15,9 +16,14 @@ builder.Services.AddSingleton<IBookRepository, InMemoryBookRepository>();
 
 builder.Services.AddScoped<IBookService, BookService>();
 
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Must go before controllers so it can catch their errors.
+app.UseExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
