@@ -13,10 +13,19 @@ public class GlobalExceptionHandler(
         CancellationToken cancellationToken)
     {
         // Client disconnected -- not an application error
-        if (exception is OperationCanceledException)
+        if (exception is OperationCanceledException &&
+            (httpContext.RequestAborted.IsCancellationRequested || cancellationToken.IsCancellationRequested))
         {
-            logger.LogInformation("Request cancelled by client: {Method} {Path}",
+            logger.LogInformation("Request cancelled/aborted: {Method} {Path}",
                 httpContext.Request.Method, httpContext.Request.Path);
+
+            // Prevent an accidental empty 200 OK when the exception is marked handled
+            if (!httpContext.Response.HasStarted)
+            {
+                httpContext.Response.Clear();
+                httpContext.Response.StatusCode = 499; // Client Closed Request (non-standard but widely used)
+            }
+
             return true;
         }
 
