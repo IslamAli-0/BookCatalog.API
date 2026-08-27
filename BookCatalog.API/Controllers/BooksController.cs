@@ -1,5 +1,5 @@
-﻿using BookCatalog.API.DTOs;
-using BookCatalog.API.Services;
+using BookCatalog.Core.DTOs;
+using BookCatalog.Core.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BookCatalog.API.Controllers;

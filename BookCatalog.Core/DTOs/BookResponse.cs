@@ -1,4 +1,4 @@
-﻿namespace BookCatalog.API.DTOs;
+namespace BookCatalog.Core.DTOs;
 
 public record BookResponse
 {
