@@ -1,25 +1,28 @@
-using Microsoft.AspNetCore.Diagnostics;
+﻿using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BookCatalog.API.Handlers;
 
-public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
+public class GlobalExceptionHandler(
+    ILogger<GlobalExceptionHandler> logger,
+    IProblemDetailsService problemDetailsService) : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
         CancellationToken cancellationToken)
     {
-        // Log full details for the developer
-        logger.LogError(exception, "Unhandled exception: {Message}", exception.Message);
-
-        // Return a sanitized response to the client
-        var problemDetails = new ProblemDetails
+        // Client disconnected -- not an application error
+        if (exception is OperationCanceledException)
         {
-            Status = StatusCodes.Status500InternalServerError,
-            Title = "Server Error",
-            Detail = "An unexpected error occurred while processing your request. Please try again later."
-        };
+            logger.LogInformation("Request cancelled by client: {Method} {Path}",
+                httpContext.Request.Method, httpContext.Request.Path);
+            return true;
+        }
+
+        // Log full details with request context for correlation
+        logger.LogError(exception, "Unhandled exception on {Method} {Path}: {Message}",
+            httpContext.Request.Method, httpContext.Request.Path, exception.Message);
 
         if (httpContext.Response.HasStarted)
         {
@@ -27,10 +30,21 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         }
 
         httpContext.Response.Clear();
-        httpContext.Response.StatusCode = problemDetails.Status!.Value;
-        httpContext.Response.ContentType = "application/problem+json";
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+        httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
-        return true;
+        // Use IProblemDetailsService so AddProblemDetails() formatting pipeline is honored
+        return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
+        {
+            HttpContext = httpContext,
+            Exception = exception,
+            ProblemDetails =
+            {
+                Status = StatusCodes.Status500InternalServerError,
+                Title = "Server Error",
+                Detail = "An unexpected error occurred while processing your request. Please try again later.",
+                Instance = httpContext.Request.Path,
+                Extensions = { ["traceId"] = httpContext.TraceIdentifier }
+            }
+        });
     }
 }
