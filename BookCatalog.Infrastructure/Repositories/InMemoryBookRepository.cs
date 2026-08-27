@@ -1,7 +1,8 @@
-﻿using System.Collections.Concurrent;
-using BookCatalog.API.Models;
+using System.Collections.Concurrent;
+using BookCatalog.Core.Models;
+using BookCatalog.Core.Repositories;
 
-namespace BookCatalog.API.Repositories;
+namespace BookCatalog.Infrastructure.Repositories;
 
 public class InMemoryBookRepository : IBookRepository
 {

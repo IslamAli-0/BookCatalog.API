@@ -1,7 +1,7 @@
-﻿using BookCatalog.API.Attributes;
+using BookCatalog.Core.Attributes;
 using System.ComponentModel.DataAnnotations;
 
-namespace BookCatalog.API.DTOs;
+namespace BookCatalog.Core.DTOs;
 
 public record UpdateBookRequest
 {

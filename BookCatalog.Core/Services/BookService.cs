@@ -1,9 +1,10 @@
-﻿using BookCatalog.API.DTOs;
-using BookCatalog.API.Mappers;
-using BookCatalog.API.Models;
-using BookCatalog.API.Repositories;
+using BookCatalog.Core.DTOs;
+using BookCatalog.Core.Mappers;
+using BookCatalog.Core.Models;
+using BookCatalog.Core.Repositories;
+using Microsoft.Extensions.Logging;
 
-namespace BookCatalog.API.Services;
+namespace BookCatalog.Core.Services;
 
 public class BookService(IBookRepository repository, ILogger<BookService> logger) : IBookService
 {

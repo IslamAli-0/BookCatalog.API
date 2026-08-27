@@ -1,6 +1,6 @@
-﻿using BookCatalog.API.Models;
+using BookCatalog.Core.Models;
 
-namespace BookCatalog.API.Repositories;
+namespace BookCatalog.Core.Repositories;
 
 public interface IBookRepository
 {

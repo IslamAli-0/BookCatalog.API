@@ -62,3 +62,15 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
 * **Why:** It removes unnecessary boilerplate (declaring and assigning `readonly` fields) and keeps the class clean and focused on business logic.
 * **Mapping Strategy:** Used manual mapping via C# Extension Methods (`BookMapper.cs`) instead of an external library like AutoMapper.
 * **Why:** For a small domain, external mappers add unnecessary dependencies and reflection overhead. Extension methods keep the Service layer clean (`book.ToResponse()`), maintain high performance, and keep the mapping logic explicit and easy to debug.
+
+## Physical Layered Architecture (Multi-Project Solution)
+* **Separation into 3 distinct C# projects:** Refactored from a single-project solution into three separate Class Library / Web API projects: `BookCatalog.Core`, `BookCatalog.Infrastructure`, and `BookCatalog.API`.
+* **Why:** Moving from logical folder separation to physical project boundaries enforces the Dependency Inversion Principle at compile time. It is no longer possible to accidentally call `InMemoryBookRepository` directly from a controller — the compiler enforces the layering.
+* **Project Dependency Direction (`BookCatalog.Core` ← `BookCatalog.Infrastructure` ← `BookCatalog.API`):**
+  * `BookCatalog.Core` has zero dependencies on other projects. It owns the domain (`Models`), the contracts (`DTOs`, `IBookService`, `IBookRepository`), the mapping extension methods (`Mappers`), and the business logic (`BookService`).
+  * `BookCatalog.Infrastructure` references only `Core`. It contains implementations that depend on external concerns — currently `InMemoryBookRepository`. Future database implementations (EF Core, Dapper) will live here.
+  * `BookCatalog.API` references both `Core` (for DI interfaces) and `Infrastructure` (to register the concrete repository). It contains only HTTP-level concerns: Controllers and `Program.cs`.
+* **`ValidPublishYearAttribute` placed in `BookCatalog.Core`:** The custom validation attribute was moved to `Core` alongside the DTOs that use it.
+* **Why:** Keeping the attribute in the API project would force the DTOs to reference API, reversing the dependency direction. Since it is pure validation logic with no infrastructure dependencies, `Core` is the correct home.
+* **`Microsoft.Extensions.Logging.Abstractions` NuGet in `BookCatalog.Core`:** Added this lightweight package to allow `BookService` to depend on `ILogger<T>`.
+* **Why:** Class Library projects do not receive ASP.NET Core's implicit namespace imports. Rather than adding a full framework dependency, the abstractions-only package provides `ILogger<T>` with no runtime overhead and keeps `Core` framework-agnostic (it does not reference `Microsoft.AspNetCore.*`).
