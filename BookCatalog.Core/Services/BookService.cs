@@ -1,19 +1,30 @@
 using BookCatalog.Core.DTOs;
+using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Mappers;
 using BookCatalog.Core.Models;
-using BookCatalog.Core.Repositories;
 using Microsoft.Extensions.Logging;
 
 namespace BookCatalog.Core.Services;
 
 public class BookService(IBookRepository repository, ILogger<BookService> logger) : IBookService
 {
-    public async Task<IEnumerable<BookResponse>> GetAllBooksAsync()
+    public async Task<PagedResponse<BookResponse>> GetAllBooksAsync(BookQueryParameters parameters)
     {
-        logger.LogInformation("Retrieving all books from the catalog.");
-        var books = await repository.GetAllAsync();
+        // Defensive check
+        if (parameters.PageNumber < 1) parameters.PageNumber = 1;
 
-        return books.Select(b => b.ToResponse());
+        logger.LogInformation("Retrieving books. Page: {Page}, Size: {Size}, Search: {Search}",
+            parameters.PageNumber, parameters.PageSize, parameters.SearchTerm ?? "none");
+
+        var (books, totalCount) = await repository.GetAllAsync(parameters);
+
+        return new PagedResponse<BookResponse>
+        {
+            Items = books.Select(b => b.ToResponse()),
+            TotalCount = totalCount,
+            PageNumber = parameters.PageNumber,
+            PageSize = parameters.PageSize
+        };
     }
 
     public async Task<BookResponse?> GetBookByIdAsync(Guid id)
