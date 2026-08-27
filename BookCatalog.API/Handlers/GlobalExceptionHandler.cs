@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BookCatalog.API.Handlers;
@@ -21,7 +21,14 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
             Detail = "An unexpected error occurred while processing your request. Please try again later."
         };
 
-        httpContext.Response.StatusCode = problemDetails.Status.Value;
+        if (httpContext.Response.HasStarted)
+        {
+            return false;
+        }
+
+        httpContext.Response.Clear();
+        httpContext.Response.StatusCode = problemDetails.Status!.Value;
+        httpContext.Response.ContentType = "application/problem+json";
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 
         return true;
