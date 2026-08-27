@@ -20,10 +20,10 @@ public class GlobalExceptionHandler(
                 httpContext.Request.Method, httpContext.Request.Path);
 
             // Prevent an accidental empty 200 OK when the exception is marked handled
-            if (!httpContext.Response.HasStarted)
             {
+                const int ClientClosedRequestStatusCode = 499; // Non-standard, but commonly used to represent a client-aborted request.
                 httpContext.Response.Clear();
-                httpContext.Response.StatusCode = 499; // Client Closed Request (non-standard but widely used)
+                httpContext.Response.StatusCode = ClientClosedRequestStatusCode;
             }
 
             return true;
