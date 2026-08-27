@@ -9,11 +9,10 @@ namespace BookCatalog.API.Controllers;
 public class BooksController(IBookService bookService) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] BookQueryParameters parameters)
     {
-        var books = await bookService.GetAllBooksAsync();
-
-        return Ok(books); 
+        var pagedResult = await bookService.GetAllBooksAsync(parameters);
+        return Ok(pagedResult); 
     }
 
     [HttpGet("{id:guid}")]

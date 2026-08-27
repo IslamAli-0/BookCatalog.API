@@ -1,4 +1,4 @@
-using BookCatalog.Core.Repositories;
+using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Repositories;
 
