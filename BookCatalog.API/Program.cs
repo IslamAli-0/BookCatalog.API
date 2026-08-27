@@ -1,5 +1,6 @@
-using BookCatalog.API.Repositories;
-using BookCatalog.API.Services;
+using BookCatalog.Core.Interfaces;
+using BookCatalog.Core.Services;
+using BookCatalog.Infrastructure.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 

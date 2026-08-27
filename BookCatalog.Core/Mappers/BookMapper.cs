@@ -1,7 +1,7 @@
-﻿using BookCatalog.API.DTOs;
-using BookCatalog.API.Models;
+using BookCatalog.Core.DTOs;
+using BookCatalog.Core.Models;
 
-namespace BookCatalog.API.Mappers;
+namespace BookCatalog.Core.Mappers;
 
 public static class BookMapper
 {

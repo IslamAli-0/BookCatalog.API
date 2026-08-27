@@ -1,6 +1,6 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
-namespace BookCatalog.API.Attributes;
+namespace BookCatalog.Core.Attributes;
 
 public class ValidPublishYearAttribute : ValidationAttribute
 {
