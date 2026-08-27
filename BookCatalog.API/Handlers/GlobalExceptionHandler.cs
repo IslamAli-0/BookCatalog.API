@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BookCatalog.API.Handlers;
@@ -21,8 +21,8 @@ public class GlobalExceptionHandler(
         }
 
         // Log full details with request context for correlation
-        logger.LogError(exception, "Unhandled exception on {Method} {Path}: {Message}",
-            httpContext.Request.Method, httpContext.Request.Path, exception.Message);
+        logger.LogError(exception, "Unhandled exception [{TraceId}] on {Method} {Path}: {Message}",
+            httpContext.TraceIdentifier, httpContext.Request.Method, httpContext.Request.Path, exception.Message);
 
         if (httpContext.Response.HasStarted)
         {
