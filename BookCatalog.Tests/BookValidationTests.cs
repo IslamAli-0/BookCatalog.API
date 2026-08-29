@@ -261,4 +261,58 @@ public class BookValidationTests
             "Publish year must be valid and cannot be far in the future.",
             validationResults[0].ErrorMessage);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DTO-level integration: ValidPublishYear inside UpdateBookRequest
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void UpdateBookRequest_WithValidPublishYear_PassesModelValidation()
+    {
+        // Arrange — a fully valid update DTO (mirrors CreateBookRequest validation rules)
+        var request = new UpdateBookRequest
+        {
+            ISBN        = "9780132350884",
+            Title       = "Clean Code",
+            Author      = "Robert C. Martin",
+            Genre       = "Technology",
+            PublishYear = 2008
+        };
+        var validationResults = new List<ValidationResult>();
+        var context           = new ValidationContext(request);
+
+        // Act
+        bool isValid = Validator.TryValidateObject(request, context, validationResults, validateAllProperties: true);
+
+        // Assert
+        Assert.True(isValid);
+        Assert.Empty(validationResults);
+    }
+
+    [Fact]
+    public void UpdateBookRequest_WithFuturePublishYear_FailsModelValidation()
+    {
+        // Arrange — UpdateBookRequest carries the same [ValidPublishYear] annotation;
+        // this test ensures the attribute is enforced there independently of CreateBookRequest
+        var request = new UpdateBookRequest
+        {
+            ISBN        = "9780132350884",
+            Title       = "Future Edition",
+            Author      = "Robert C. Martin",
+            Genre       = "Technology",
+            PublishYear = 3000
+        };
+        var validationResults = new List<ValidationResult>();
+        var context           = new ValidationContext(request);
+
+        // Act
+        bool isValid = Validator.TryValidateObject(request, context, validationResults, validateAllProperties: true);
+
+        // Assert
+        Assert.False(isValid);
+        Assert.Single(validationResults);
+        Assert.Equal(
+            "Publish year must be valid and cannot be far in the future.",
+            validationResults[0].ErrorMessage);
+    }
 }
