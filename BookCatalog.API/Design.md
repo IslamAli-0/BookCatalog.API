@@ -96,3 +96,33 @@ I chose a standard 3-layer architecture (Controllers -> Services -> Repositories
 * **`OperationCanceledException` short-circuit:** Client-aborted requests (e.g., user navigates away) throw `OperationCanceledException`. Treating them as server errors produces misleading 500 counts in metrics and noisy error logs. The handler detects this case, logs it at `Information` level, and returns without writing a response body.
 * **Why `ProblemDetails`:** It is an IETF standard (RFC 7807) for HTTP error responses. Using it ensures error payloads are consistent and machine-readable, which matters when clients or API gateways need to parse error bodies programmatically.
 * **Why catching and doing nothing is worse:** A swallowed exception hides the system state. The application may continue in a corrupted state, producing silent data loss or wrong results with no log trail to investigate.
+
+## Unit Testing Strategy
+
+### Project: `BookCatalog.Tests` (xUnit + Moq)
+
+A dedicated `BookCatalog.Tests` project was added to the solution alongside the three production projects. It references only `BookCatalog.Core` — it has no knowledge of `BookCatalog.Infrastructure` or `BookCatalog.API`. This mirrors the dependency direction of the production code and keeps the test suite free of infrastructure concerns.
+
+**Tools chosen:**
+* **xUnit** — the idiomatic testing framework for .NET. Each `[Fact]` method is instantiated in its own class instance, which enforces test isolation without extra configuration.
+* **Moq** — a strongly-typed mocking library used exclusively to fake `IBookRepository`. The mocks live in constructor fields so each test receives a brand-new `Mock<T>`, preventing any state leak between runs.
+
+**File layout:**
+| File | What it tests |
+|---|---|
+| `BookServiceTests.cs` | All five `BookService` methods — business logic, mapping, and repository interaction |
+| `BookValidationTests.cs` | `ValidPublishYearAttribute` in isolation and wired into the full `CreateBookRequest` DTO |
+
+Every test strictly follows the **Arrange / Act / Assert** pattern with inline `// Arrange`, `// Act`, `// Assert` comments, and every method name follows the `MethodName_StateUnderTest_ExpectedBehavior` convention.
+
+---
+
+### Testing Decisions
+
+* **Unit boundary at `IBookRepository`:** A unit in this suite is a single public method of `BookService`. The boundary is drawn at `IBookRepository` — everything behind that interface (`InMemoryBookRepository`, and later EF Core) is outside the scope of what these tests are proving. `ILogger<BookService>` is also faked, because logging is an infrastructure concern, not part of the business contract. The mapper methods (`ToResponse`, `ToBook`, `ApplyUpdate`) are inside the boundary intentionally: they contain no I/O, so testing them through `BookService` proves the entire transformation chain without needing a dedicated mapper test class.
+* **Mocks with `Verify`, not just stubs:** `Mock<IBookRepository>` plays two roles. First, it returns canned data via `.Setup(...).ReturnsAsync(...)` so the test controls what the repository appears to see (stub behaviour). Second, it proves the service interacted with the repository correctly via `.Verify(..., Times.Once/Never)` (mock behaviour). The `Verify` calls are the critical part: `UpdateBookAsync_WhenBookDoesNotExist_ReturnsNull` uses `Verify(r => r.UpdateAsync(...), Times.Never)` to prove the service short-circuits before touching the store. A plain stub that only checked the return value could never detect a missing null-guard.
+* **No dependency on `InMemoryBookRepository`:** `InMemoryBookRepository` will be replaced by an EF Core implementation in a future sprint. If the tests were wired to it directly, they would break the moment that swap happened — not because `BookService` regressed, but because the infrastructure changed underneath it. By depending only on `IBookRepository` through a mock, the tests are permanently immune to infrastructure churn and run in milliseconds with no network or disk involvement.
+* **Constructor injection for zero shared state:** xUnit creates a new `BookServiceTests` instance for every `[Fact]`, and the constructor always re-creates `_mockRepo` and `_sut`. If the mocks were static or shared across tests, a previous test's `.Setup(...)` could bleed into the next one — producing a test that appears to pass because it's riding on state it didn't set up itself. In CI, tests run in any order and sometimes in parallel; shared state turns these into random, non-reproducible failures that are extremely hard to diagnose.
+* **Error paths over happy paths:** The happy path for `GetBookByIdAsync` (book found → mapper runs → response returned) mostly exercises the mapper, which is trivially correct once written. The error paths — `GetBookByIdAsync_WhenBookDoesNotExist_ReturnsNull`, `UpdateBookAsync_WhenBookDoesNotExist_ReturnsNull`, `DeleteBookAsync_WhenBookDoesNotExist_ReturnsFalse` — test branching logic that directly determines the HTTP status code the controller sends back. A regression in the null-guard of `UpdateBookAsync` would cause a `NullReferenceException` that `GlobalExceptionHandler` catches and returns as a `500`, when the client deserved a `404`. Error paths protect observable, user-facing behaviour that happy paths simply cannot reach.
+* **What this suite proves and what it does not:** The tests prove that `BookService` correctly orchestrates `IBookRepository` calls and correctly maps domain models to response DTOs — given that the repository behaves as the mock declares. They say nothing about whether `InMemoryBookRepository` (or the future EF Core implementation) actually stores, retrieves, updates, and deletes data correctly against a real data source. Integration tests, outside this suite's scope, are required to verify that contract. The unit tests guard the service layer; they have no opinion about the infrastructure layer beneath it.
+* **`ValidPublishYear` gets its own test class:** The attribute is a pure function of its input — no mocks needed. Separating it into `BookValidationTests` keeps the two concerns (business logic and validation rules) in distinct files, making failures immediately obvious. The class also tests the attribute both in isolation (direct `GetValidationResult` call) and wired into the full `CreateBookRequest` DTO via `Validator.TryValidateObject`, which is the same code path ASP.NET Core uses internally — so the tests are realistic, not just testing the attribute in a vacuum.
