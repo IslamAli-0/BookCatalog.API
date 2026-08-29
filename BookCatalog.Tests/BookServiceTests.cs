@@ -61,6 +61,56 @@ public class BookServiceTests
     }
 
     [Fact]
+    public async Task GetAllBooksAsync_WithItemsSpanningMultiplePages_CalculatesTotalPagesCorrectly()
+    {
+        // Arrange — 10 total items with page size of 3 should yield 4 pages (ceiling of 10/3)
+        var parameters = new BookQueryParameters { PageNumber = 1, PageSize = 3 };
+        var books = Enumerable.Range(1, 3).Select(i => new Book
+        {
+            Id          = Guid.NewGuid(),
+            Title       = $"Book {i}",
+            Author      = "Author",
+            ISBN        = "9780132350884",
+            Genre       = "Technology",
+            PublishYear = 2020
+        });
+        _mockRepo
+            .Setup(r => r.GetAllAsync(parameters))
+            .ReturnsAsync((books, 10)); // 10 total, but this page only holds 3
+
+        // Act
+        var result = await _sut.GetAllBooksAsync(parameters);
+
+        // Assert — TotalPages must round up, not truncate
+        Assert.Equal(10, result.TotalCount);
+        Assert.Equal(4, result.TotalPages); // Math.Ceiling(10 / 3.0) = 4
+
+        _mockRepo.Verify(r => r.GetAllAsync(parameters), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetAllBooksAsync_WithFilterParameters_PassesParametersToRepositoryUnchanged()
+    {
+        // Arrange — the service must not silently drop Genre or SearchTerm
+        var parameters = new BookQueryParameters
+        {
+            PageNumber = 1,
+            PageSize   = 10,
+            Genre      = "Technology",
+            SearchTerm = "Clean"
+        };
+        _mockRepo
+            .Setup(r => r.GetAllAsync(parameters))
+            .ReturnsAsync((Enumerable.Empty<Book>(), 0));
+
+        // Act
+        await _sut.GetAllBooksAsync(parameters);
+
+        // Assert — the exact parameters object (with Genre and SearchTerm intact) reached the repo
+        _mockRepo.Verify(r => r.GetAllAsync(parameters), Times.Once);
+    }
+
+    [Fact]
     public async Task GetAllBooksAsync_WhenBooksExist_ReturnsEmptyItemsForOutOfRangePage()
     {
         // Arrange — page 9999 beyond any data
@@ -131,6 +181,36 @@ public class BookServiceTests
         Assert.Equal("Eric Evans", result.Author);
         Assert.Equal("9780321125217", result.ISBN);
         Assert.Equal(2003, result.PublishYear);
+        Assert.Equal("Tackling Complexity in the Heart of Software", result.Description);
+
+        _mockRepo.Verify(r => r.GetByIdAsync(bookId), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetBookByIdAsync_WhenBookHasNoDescription_ReturnsMappedResponseWithNullDescription()
+    {
+        // Arrange — Description is optional on the domain model; the response must preserve null
+        var bookId = Guid.NewGuid();
+        var book = new Book
+        {
+            Id          = bookId,
+            Title       = "No Description Book",
+            Author      = "Anonymous",
+            ISBN        = "9780132350884",
+            Genre       = "Technology",
+            PublishYear = 2010,
+            Description = null
+        };
+        _mockRepo
+            .Setup(r => r.GetByIdAsync(bookId))
+            .ReturnsAsync(book);
+
+        // Act
+        var result = await _sut.GetBookByIdAsync(bookId);
+
+        // Assert — null must be mapped as-is, not converted to empty string or omitted
+        Assert.NotNull(result);
+        Assert.Null(result.Description);
 
         _mockRepo.Verify(r => r.GetByIdAsync(bookId), Times.Once);
     }
@@ -237,6 +317,9 @@ public class BookServiceTests
         Assert.Equal(request.Author, capturedBook.Author);
         Assert.Equal(request.Genre, capturedBook.Genre);
         Assert.Equal(request.PublishYear, capturedBook.PublishYear);
+
+        // The service must NOT pre-assign an ID — that responsibility belongs to the repository
+        Assert.Equal(Guid.Empty, capturedBook.Id);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
