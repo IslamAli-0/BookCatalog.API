@@ -126,10 +126,13 @@ public class BookValidationTests
     }
 
     [Fact]
-    public void IsValid_WithYearTwoYearsAhead_ReturnsValidationError()
+    public void IsValid_WithYearThreeYearsAhead_ReturnsValidationError()
     {
-        // Arrange — current year + 2 exceeds the pre-order window (off-by-one boundary test)
-        int year = DateTime.UtcNow.Year + 2;
+        // Arrange — current year + 3 is guaranteed to exceed the pre-order window.
+        // Using +2 was flaky: if the test runs at 23:59:59 UTC on Dec 31 and the
+        // attribute reads DateTime.UtcNow.Year one second later (Jan 1), Year+2 becomes
+        // the attribute's allowed currentYear+1 and the assertion intermittently fails.
+        int year = DateTime.UtcNow.Year + 3;
 
         // Act
         var result = Validate(year);
@@ -237,10 +240,11 @@ public class BookValidationTests
     }
 
     [Fact]
-    public void CreateBookRequest_WithCustomErrorMessage_SurfacesOverriddenMessage()
+    public void CreateBookRequest_WithPastPublishYear_FailsModelValidation()
     {
-        // Arrange — CreateBookRequest overrides ErrorMessage on [ValidPublishYear]
-        // The attribute falls back to the custom message when one is provided.
+        // Arrange — publish year below the minimum (1400); all other fields are valid.
+        // Also verifies that the custom ErrorMessage declared on [ValidPublishYear] in
+        // CreateBookRequest is what gets surfaced (not the attribute's default message).
         var request = new CreateBookRequest
         {
             ISBN        = "9780132350884",

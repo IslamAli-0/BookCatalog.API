@@ -135,17 +135,25 @@ public class BookServiceTests
     {
         // Arrange — client sends an invalid page number (e.g. 0 or negative)
         var parameters = new BookQueryParameters { PageNumber = 0, PageSize = 10 };
+
+        // Capture the PageNumber value at the exact moment the repo is called.
+        // This proves normalization happened BEFORE the repository was invoked, not after.
+        // A plain Verify(parameters) would pass even if the repo was called with PageNumber=0
+        // and the parameter was mutated to 1 afterwards, because both point to the same object.
+        int? pageNumberAtRepoCall = null;
         _mockRepo
             .Setup(r => r.GetAllAsync(It.IsAny<BookQueryParameters>()))
+            .Callback<BookQueryParameters>(p => pageNumberAtRepoCall = p.PageNumber)
             .ReturnsAsync((Enumerable.Empty<Book>(), 0));
 
         // Act
         var result = await _sut.GetAllBooksAsync(parameters);
 
-        // Assert — defensive branch in BookService corrects PageNumber to 1
+        // Assert — both the returned value AND the value seen by the repo are 1
         Assert.Equal(1, result.PageNumber);
+        Assert.Equal(1, pageNumberAtRepoCall);
 
-        _mockRepo.Verify(r => r.GetAllAsync(parameters), Times.Once);
+        _mockRepo.Verify(r => r.GetAllAsync(It.IsAny<BookQueryParameters>()), Times.Once);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -364,8 +372,9 @@ public class BookServiceTests
         Assert.Equal("Software Engineering", result.Genre);
         Assert.Equal(2024, result.PublishYear);
 
-        // Prove both repo calls happened in the correct order
-        _mockRepo.Verify(r => r.GetByIdAsync(bookId),   Times.Once);
+        // Prove both repo calls were made (Verify does not enforce ordering;
+        // the test name and AAA structure communicate the expected sequence)
+        _mockRepo.Verify(r => r.GetByIdAsync(bookId),      Times.Once);
         _mockRepo.Verify(r => r.UpdateAsync(existingBook), Times.Once);
     }
 
