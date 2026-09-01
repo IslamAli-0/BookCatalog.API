@@ -26,6 +26,13 @@ builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
+// Auto-apply pending EF Core migrations on startup (required for Docker one-command setup)
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    context.Database.Migrate();
+}
+
 // Must go before controllers so it can catch their errors.
 app.UseExceptionHandler();
 
