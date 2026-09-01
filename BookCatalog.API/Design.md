@@ -277,7 +277,7 @@ Yes, I am sure. This is handled gracefully by EF Core's Optimistic Concurrency C
 2. User A's thread reaches `SaveChangesAsync()` first. EF Core generates `UPDATE Books SET IsAvailable = 0 WHERE Id = @id AND RowVersion = 0x001`. The database updates the row and auto-increments the `RowVersion` to `0x002`.
 3. User B's thread reaches `SaveChangesAsync()`. EF Core generates `UPDATE Books SET IsAvailable = 0 WHERE Id = @id AND RowVersion = 0x001`. The database finds 0 matching rows because the `RowVersion` is now `0x002`. 
 4. EF Core detects 0 rows updated and throws a `DbUpdateConcurrencyException`. The explicit `IDbContextTransaction` in our `LendingRepository` catches the exception, rolls back the transaction, and throws it up the stack.
-5. The API returns a 500 (or we could catch it specifically to return a 409 Conflict). User A gets the book, User B gets denied. No double-borrowing occurs.
+5. The API returns a 409 Conflict. User A gets the book, User B gets denied. No double-borrowing occurs.
 
 **24. What is a race condition? Where is yours?**
 A race condition happens when the outcome of a program depends on the unpredictable timing of concurrent threads. In this system, the race condition is the "check-then-act" flaw: checking if a book is available, then acting to borrow it. Without the `RowVersion` concurrency token and transaction, two threads could check `IsAvailable` at the same time (both see `true`), and both act (both borrow it), violating the real-world constraint that one physical book can only be lent to one person.

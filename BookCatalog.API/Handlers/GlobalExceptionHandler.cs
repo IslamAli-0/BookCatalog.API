@@ -48,7 +48,7 @@ public class GlobalExceptionHandler(
             title = "Validation Error";
             detail = argEx.Message;
         }
-        else if (exception is KeyNotFoundException notFoundEx)
+        else if (exception is BookCatalog.Core.Exceptions.NotFoundException notFoundEx)
         {
             statusCode = StatusCodes.Status404NotFound;
             title = "Not Found";
@@ -60,11 +60,11 @@ public class GlobalExceptionHandler(
             title = "Conflict";
             detail = "The resource was modified by another request. Please retry.";
         }
-        else if (exception is InvalidOperationException invEx)
+        else if (exception is BookCatalog.Core.Exceptions.ConflictException conflictEx)
         {
             statusCode = StatusCodes.Status409Conflict;
             title = "Conflict";
-            detail = invEx.Message;
+            detail = conflictEx.Message;
         }
 
         httpContext.Response.Clear();
