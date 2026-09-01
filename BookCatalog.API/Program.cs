@@ -1,7 +1,9 @@
 using BookCatalog.API.Handlers;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Services;
+using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,9 +12,12 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// EF Core — register the DbContext with the SQL Server provider
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// MUST be Singleton so the Dictionary survives across HTTP requests.
-builder.Services.AddSingleton<IBookRepository, InMemoryBookRepository>();
+// Scoped lifetime — DbContext is scoped, so the repository must be too
+builder.Services.AddScoped<IBookRepository, BookRepository>();
 
 builder.Services.AddScoped<IBookService, BookService>();
 
