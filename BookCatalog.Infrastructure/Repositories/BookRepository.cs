@@ -80,4 +80,9 @@ public class BookRepository(ApplicationDbContext context) : IBookRepository
         await context.SaveChangesAsync();
         return true;
     }
+
+    public async Task<bool> AuthorExistsAsync(Guid authorId)
+    {
+        return await context.Authors.AnyAsync(a => a.Id == authorId);
+    }
 }

@@ -3,9 +3,9 @@ services:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "Your_Secure_Password_123!"
-    ports:
-      - "1433:1433"
+      MSSQL_SA_PASSWORD: "${DB_PASSWORD:-Your_Secure_Password_123!}"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
 
   api:
     build:
@@ -14,6 +14,9 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - ConnectionStrings__DefaultConnection=Server=db,1433;Database=BookCatalogDb;User Id=sa;Password=Your_Secure_Password_123!;TrustServerCertificate=True;
+      - ConnectionStrings__DefaultConnection=Server=db;Database=BookCatalogDb;User Id=sa;Password=${DB_PASSWORD:-Your_Secure_Password_123!};TrustServerCertificate=True;
     depends_on:
       - db
+
+volumes:
+  sqlserver_data:
