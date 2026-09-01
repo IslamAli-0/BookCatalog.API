@@ -23,7 +23,11 @@ public class BookServiceTests
     {
         _mockRepo   = new Mock<IBookRepository>();
         _mockLogger = new Mock<ILogger<BookService>>();
-        _sut        = new BookService(_mockRepo.Object, _mockLogger.Object);
+
+        // By default, assume the author exists for create/update scenarios
+        _mockRepo.Setup(r => r.AuthorExistsAsync(It.IsAny<Guid>())).ReturnsAsync(true);
+
+        _sut = new BookService(_mockRepo.Object, _mockLogger.Object);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -35,14 +39,15 @@ public class BookServiceTests
     {
         // Arrange
         var parameters = new BookQueryParameters { PageNumber = 1, PageSize = 10 };
-        var authorId = Guid.NewGuid();
+        var author1Id = Guid.NewGuid();
+        var author2Id = Guid.NewGuid();
         var books = new List<Book>
         {
-            new() { Id = Guid.NewGuid(), Title = "Clean Code", AuthorId = authorId,
-                    Author = new Author { Id = authorId, Name = "Robert C. Martin" },
+            new() { Id = Guid.NewGuid(), Title = "Clean Code", AuthorId = author1Id,
+                    Author = new Author { Id = author1Id, Name = "Robert C. Martin" },
                     ISBN = "9780132350884", Genre = "Technology", PublishYear = 2008 },
-            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", AuthorId = Guid.NewGuid(),
-                    Author = new Author { Id = Guid.NewGuid(), Name = "Andrew Hunt" },
+            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", AuthorId = author2Id,
+                    Author = new Author { Id = author2Id, Name = "Andrew Hunt" },
                     ISBN = "9780135957059", Genre = "Technology", PublishYear = 2019 }
         };
         _mockRepo
@@ -202,13 +207,15 @@ public class BookServiceTests
     [Fact]
     public async Task GetBookByIdAsync_WhenBookHasNoDescription_ReturnsMappedResponseWithNullDescription()
     {
-        // Arrange — Description is optional on the domain model; the response must preserve null
+        // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var book = new Book
         {
             Id          = bookId,
             Title       = "No Description Book",
-            AuthorId    = Guid.NewGuid(),
+            AuthorId    = authorId,
+            Author      = new Author { Id = authorId, Name = "Anonymous" },
             ISBN        = "9780132350884",
             Genre       = "Technology",
             PublishYear = 2010,
@@ -224,7 +231,35 @@ public class BookServiceTests
         // Assert — null must be mapped as-is, not converted to empty string or omitted
         Assert.NotNull(result);
         Assert.Null(result.Description);
+    }
 
+    [Fact]
+    public async Task GetBookByIdAsync_WhenBookAuthorIsNull_ReturnsMappedResponseWithUnknownAuthor()
+    {
+        // Arrange
+        var bookId = Guid.NewGuid();
+        var book = new Book
+        {
+            Id          = bookId,
+            Title       = "Missing Author Book",
+            AuthorId    = Guid.NewGuid(),
+            Author      = null, // Navigation property not loaded
+            ISBN        = "9780132350884",
+            Genre       = "Technology",
+            PublishYear = 2010,
+            Description = "Test"
+        };
+        
+        _mockRepo
+            .Setup(repo => repo.GetByIdAsync(bookId))
+            .ReturnsAsync(book);
+
+        // Act
+        var result = await _sut.GetBookByIdAsync(bookId);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Unknown", result.AuthorName);
         _mockRepo.Verify(r => r.GetByIdAsync(bookId), Times.Once);
     }
 
@@ -383,7 +418,7 @@ public class BookServiceTests
 
         // Prove both repo calls were made (Verify does not enforce ordering;
         // the test name and AAA structure communicate the expected sequence)
-        _mockRepo.Verify(r => r.GetByIdAsync(bookId),      Times.Once);
+        _mockRepo.Verify(r => r.GetByIdAsync(bookId),      Times.Exactly(2));
         _mockRepo.Verify(r => r.UpdateAsync(existingBook), Times.Once);
     }
 

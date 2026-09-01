@@ -14,6 +14,7 @@ public record UpdateBookRequest
     public string Title { get; init; } = string.Empty;
 
     [Required(ErrorMessage = "The author ID is required.")]
+    [NotEmpty(ErrorMessage = "The author ID cannot be empty.")]
     public Guid AuthorId { get; init; }
 
     [Required(ErrorMessage = "Genre is required to help categorize the book.")]

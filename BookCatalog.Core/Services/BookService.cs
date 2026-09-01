@@ -42,6 +42,11 @@ public class BookService(IBookRepository repository, ILogger<BookService> logger
 
     public async Task<BookResponse> CreateBookAsync(CreateBookRequest request)
     {
+        if (!await repository.AuthorExistsAsync(request.AuthorId))
+        {
+            throw new ArgumentException($"Author with ID {request.AuthorId} does not exist.");
+        }
+
         var newBook = request.ToBook();
 
         var createdBook = await repository.CreateAsync(newBook);
@@ -53,6 +58,11 @@ public class BookService(IBookRepository repository, ILogger<BookService> logger
 
     public async Task<BookResponse?> UpdateBookAsync(Guid id, UpdateBookRequest request)
     {
+        if (!await repository.AuthorExistsAsync(request.AuthorId))
+        {
+            throw new ArgumentException($"Author with ID {request.AuthorId} does not exist.");
+        }
+
         var existingBook = await repository.GetByIdAsync(id);
 
         if (existingBook == null)
@@ -67,7 +77,8 @@ public class BookService(IBookRepository repository, ILogger<BookService> logger
 
         logger.LogInformation("Successfully updated book ID {BookId}", existingBook.Id);
 
-        return existingBook.ToResponse();
+        var refreshedBook = await repository.GetByIdAsync(id);
+        return refreshedBook!.ToResponse();
     }
 
     public async Task<bool> DeleteBookAsync(Guid id)

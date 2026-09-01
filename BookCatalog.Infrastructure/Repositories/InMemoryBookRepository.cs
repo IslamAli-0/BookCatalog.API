@@ -68,4 +68,10 @@ public class InMemoryBookRepository : IBookRepository
         var removed = _books.TryRemove(id, out _);
         return Task.FromResult(removed);
     }
+
+    public Task<bool> AuthorExistsAsync(Guid authorId)
+    {
+        // For in-memory store, assume authors exist or always return true.
+        return Task.FromResult(true);
+    }
 }

@@ -30,7 +30,23 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    context.Database.Migrate();
+    var maxRetries = 5;
+    for (int retry = 1; retry <= maxRetries; retry++)
+    {
+        try
+        {
+            await context.Database.MigrateAsync();
+            break;
+        }
+        catch (Exception ex)
+        {
+            if (retry == maxRetries)
+            {
+                throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
+            }
+            await Task.Delay(2000);
+        }
+    }
 }
 
 // Must go before controllers so it can catch their errors.
