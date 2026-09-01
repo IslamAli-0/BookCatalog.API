@@ -48,6 +48,18 @@ public class GlobalExceptionHandler(
             title = "Validation Error";
             detail = argEx.Message;
         }
+        else if (exception is KeyNotFoundException notFoundEx)
+        {
+            statusCode = StatusCodes.Status404NotFound;
+            title = "Not Found";
+            detail = notFoundEx.Message;
+        }
+        else if (exception is Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            statusCode = StatusCodes.Status409Conflict;
+            title = "Conflict";
+            detail = "The resource was modified by another request. Please retry.";
+        }
         else if (exception is InvalidOperationException invEx)
         {
             statusCode = StatusCodes.Status409Conflict;

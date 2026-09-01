@@ -23,7 +23,7 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             if (book == null)
             {
-                throw new InvalidOperationException("Book not found.");
+                throw new KeyNotFoundException($"Book with ID {bookId} was not found.");
             }
 
             if (!book.IsAvailable)
@@ -72,7 +72,7 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             if (book == null)
             {
-                throw new InvalidOperationException("Book not found.");
+                throw new KeyNotFoundException($"Book with ID {bookId} was not found.");
             }
 
             if (book.IsAvailable)

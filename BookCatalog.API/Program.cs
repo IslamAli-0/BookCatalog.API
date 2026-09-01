@@ -52,15 +52,18 @@ using (var scope = app.Services.CreateScope())
     }
 
     // Seed Data for Authors and Users
-    if (!context.Authors.Any())
+    if (app.Environment.IsDevelopment())
     {
-        context.Authors.Add(new BookCatalog.Core.Models.Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
-        context.SaveChanges();
-    }
-    if (!context.Users.Any())
-    {
-        context.Users.Add(new BookCatalog.Core.Models.User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
-        context.SaveChanges();
+        if (!await context.Authors.AnyAsync())
+        {
+            context.Authors.Add(new BookCatalog.Core.Models.Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
+            await context.SaveChangesAsync();
+        }
+        if (!await context.Users.AnyAsync())
+        {
+            context.Users.Add(new BookCatalog.Core.Models.User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
+            await context.SaveChangesAsync();
+        }
     }
 }
 
