@@ -15,7 +15,7 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
     public async Task<Loan> BorrowBookAsync(Guid bookId, Guid userId)
     {
         // Using an explicit transaction to satisfy Week 3 assignment requirements ("Choose one such operation in your domain and make it safe").
-        using var transaction = await context.Database.BeginTransactionAsync();
+        await using var transaction = await context.Database.BeginTransactionAsync();
 
         try
         {
@@ -23,22 +23,23 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             if (book == null)
             {
-                throw new KeyNotFoundException($"Book with ID {bookId} was not found.");
+                throw new BookCatalog.Core.Exceptions.NotFoundException($"Book with ID {bookId} was not found.");
             }
 
             if (!book.IsAvailable)
             {
-                throw new InvalidOperationException("Book is already borrowed.");
+                throw new BookCatalog.Core.Exceptions.ConflictException("Book is already borrowed.");
             }
 
             book.IsAvailable = false;
 
+            var now = DateTime.UtcNow;
             var loan = new Loan
             {
                 BookId = bookId,
                 UserId = userId,
-                BorrowedAt = DateTime.UtcNow,
-                DueDate = DateTime.UtcNow.AddDays(14)
+                BorrowedAt = now,
+                DueDate = now.AddDays(14)
             };
 
             context.Loans.Add(loan);
@@ -64,7 +65,7 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
     public async Task<Loan> ReturnBookAsync(Guid bookId)
     {
-        using var transaction = await context.Database.BeginTransactionAsync();
+        await using var transaction = await context.Database.BeginTransactionAsync();
 
         try
         {
@@ -72,12 +73,12 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             if (book == null)
             {
-                throw new KeyNotFoundException($"Book with ID {bookId} was not found.");
+                throw new BookCatalog.Core.Exceptions.NotFoundException($"Book with ID {bookId} was not found.");
             }
 
             if (book.IsAvailable)
             {
-                throw new InvalidOperationException("Book is not currently borrowed.");
+                throw new BookCatalog.Core.Exceptions.ConflictException("Book is not currently borrowed.");
             }
 
             var activeLoan = await context.Loans
@@ -85,7 +86,7 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             if (activeLoan == null)
             {
-                throw new InvalidOperationException("Active loan record not found for this book.");
+                throw new BookCatalog.Core.Exceptions.NotFoundException("Active loan record not found for this book.");
             }
 
             book.IsAvailable = true;
