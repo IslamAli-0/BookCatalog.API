@@ -1,4 +1,4 @@
-﻿using BookCatalog.Core.DTOs;
+using BookCatalog.Core.DTOs;
 using BookCatalog.Core.Models;
 
 namespace BookCatalog.Core.Interfaces;
@@ -11,4 +11,5 @@ public interface IBookRepository
     Task<Book> CreateAsync(Book book);
     Task<bool> UpdateAsync(Book book);
     Task<bool> DeleteAsync(Guid id);
+    Task<bool> AuthorExistsAsync(Guid authorId);
 }

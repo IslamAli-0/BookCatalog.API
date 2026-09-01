@@ -1,7 +1,9 @@
 using BookCatalog.API.Handlers;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Services;
+using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,9 +12,12 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// EF Core — register the DbContext with the SQL Server provider
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// MUST be Singleton so the Dictionary survives across HTTP requests.
-builder.Services.AddSingleton<IBookRepository, InMemoryBookRepository>();
+// Scoped lifetime — DbContext is scoped, so the repository must be too
+builder.Services.AddScoped<IBookRepository, BookRepository>();
 
 builder.Services.AddScoped<IBookService, BookService>();
 
@@ -20,6 +25,29 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 var app = builder.Build();
+
+// Auto-apply pending EF Core migrations on startup (required for Docker one-command setup)
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var maxRetries = 5;
+    for (int retry = 1; retry <= maxRetries; retry++)
+    {
+        try
+        {
+            await context.Database.MigrateAsync();
+            break;
+        }
+        catch (Exception ex)
+        {
+            if (retry == maxRetries)
+            {
+                throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
+            }
+            await Task.Delay(2000);
+        }
+    }
+}
 
 // Must go before controllers so it can catch their errors.
 app.UseExceptionHandler();
