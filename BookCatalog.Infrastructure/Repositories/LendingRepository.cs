@@ -33,13 +33,14 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
             book.IsAvailable = false;
 
+            const int LoanPeriodDays = 14;
             var now = DateTime.UtcNow;
             var loan = new Loan
             {
                 BookId = bookId,
                 UserId = userId,
                 BorrowedAt = now,
-                DueDate = now.AddDays(14)
+                DueDate = now.AddDays(LoanPeriodDays)
             };
 
             context.Loans.Add(loan);
@@ -48,11 +49,12 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
             // at the exact same time, this SaveChangesAsync will throw a DbUpdateConcurrencyException,
             // keeping our data perfectly safe from the race condition.
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
 
             // Load navigations for mapping
             await context.Entry(loan).Reference(l => l.Book).LoadAsync();
             await context.Entry(loan).Reference(l => l.User).LoadAsync();
+
+            await transaction.CommitAsync();
 
             return loan;
         }
@@ -93,10 +95,11 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
             activeLoan.ReturnedAt = DateTime.UtcNow;
 
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
 
             await context.Entry(activeLoan).Reference(l => l.Book).LoadAsync();
             await context.Entry(activeLoan).Reference(l => l.User).LoadAsync();
+
+            await transaction.CommitAsync();
 
             return activeLoan;
         }
