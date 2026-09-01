@@ -35,11 +35,14 @@ public class BookServiceTests
     {
         // Arrange
         var parameters = new BookQueryParameters { PageNumber = 1, PageSize = 10 };
+        var authorId = Guid.NewGuid();
         var books = new List<Book>
         {
-            new() { Id = Guid.NewGuid(), Title = "Clean Code", Author = "Robert C. Martin",
+            new() { Id = Guid.NewGuid(), Title = "Clean Code", AuthorId = authorId,
+                    Author = new Author { Id = authorId, Name = "Robert C. Martin" },
                     ISBN = "9780132350884", Genre = "Technology", PublishYear = 2008 },
-            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", Author = "Andrew Hunt",
+            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", AuthorId = Guid.NewGuid(),
+                    Author = new Author { Id = Guid.NewGuid(), Name = "Andrew Hunt" },
                     ISBN = "9780135957059", Genre = "Technology", PublishYear = 2019 }
         };
         _mockRepo
@@ -69,7 +72,7 @@ public class BookServiceTests
         {
             Id          = Guid.NewGuid(),
             Title       = $"Book {i}",
-            Author      = "Author",
+            AuthorId    = Guid.NewGuid(),
             ISBN        = "9780132350884",
             Genre       = "Technology",
             PublishYear = 2020
@@ -165,11 +168,13 @@ public class BookServiceTests
     {
         // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var book = new Book
         {
             Id          = bookId,
             Title       = "Domain-Driven Design",
-            Author      = "Eric Evans",
+            AuthorId    = authorId,
+            Author      = new Author { Id = authorId, Name = "Eric Evans" },
             ISBN        = "9780321125217",
             Genre       = "Technology",
             PublishYear = 2003,
@@ -186,7 +191,7 @@ public class BookServiceTests
         Assert.NotNull(result);
         Assert.Equal(bookId, result.Id);
         Assert.Equal("Domain-Driven Design", result.Title);
-        Assert.Equal("Eric Evans", result.Author);
+        Assert.Equal("Eric Evans", result.AuthorName);
         Assert.Equal("9780321125217", result.ISBN);
         Assert.Equal(2003, result.PublishYear);
         Assert.Equal("Tackling Complexity in the Heart of Software", result.Description);
@@ -203,7 +208,7 @@ public class BookServiceTests
         {
             Id          = bookId,
             Title       = "No Description Book",
-            Author      = "Anonymous",
+            AuthorId    = Guid.NewGuid(),
             ISBN        = "9780132350884",
             Genre       = "Technology",
             PublishYear = 2010,
@@ -249,11 +254,12 @@ public class BookServiceTests
     public async Task CreateBookAsync_WithValidRequest_ReturnsMappedBookResponse()
     {
         // Arrange
+        var authorId = Guid.NewGuid();
         var request = new CreateBookRequest
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2008,
             Description = "A Handbook of Agile Software Craftsmanship"
@@ -265,7 +271,8 @@ public class BookServiceTests
             Id          = Guid.NewGuid(),
             ISBN        = request.ISBN,
             Title       = request.Title,
-            Author      = request.Author,
+            AuthorId    = request.AuthorId,
+            Author      = new Author { Id = request.AuthorId, Name = "Robert C. Martin" },
             Genre       = request.Genre,
             PublishYear = request.PublishYear,
             Description = request.Description
@@ -281,7 +288,7 @@ public class BookServiceTests
         Assert.NotNull(result);
         Assert.Equal(persistedBook.Id, result.Id);
         Assert.Equal("Clean Code", result.Title);
-        Assert.Equal("Robert C. Martin", result.Author);
+        Assert.Equal("Robert C. Martin", result.AuthorName);
         Assert.Equal(2008, result.PublishYear);
 
         // Prove CreateAsync was called with a Book (not bypassed)
@@ -292,11 +299,12 @@ public class BookServiceTests
     public async Task CreateBookAsync_WithValidRequest_MapsRequestFieldsToBookEntity()
     {
         // Arrange — verify the mapper (ToBook) correctly transfers all fields to the entity
+        var authorId = Guid.NewGuid();
         var request = new CreateBookRequest
         {
             ISBN        = "9780135957059",
             Title       = "The Pragmatic Programmer",
-            Author      = "Andrew Hunt",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2019
         };
@@ -310,7 +318,7 @@ public class BookServiceTests
                 Id          = Guid.NewGuid(),
                 ISBN        = request.ISBN,
                 Title       = request.Title,
-                Author      = request.Author,
+                AuthorId    = request.AuthorId,
                 Genre       = request.Genre,
                 PublishYear = request.PublishYear
             });
@@ -322,7 +330,7 @@ public class BookServiceTests
         Assert.NotNull(capturedBook);
         Assert.Equal(request.ISBN, capturedBook!.ISBN);
         Assert.Equal(request.Title, capturedBook.Title);
-        Assert.Equal(request.Author, capturedBook.Author);
+        Assert.Equal(request.AuthorId, capturedBook.AuthorId);
         Assert.Equal(request.Genre, capturedBook.Genre);
         Assert.Equal(request.PublishYear, capturedBook.PublishYear);
 
@@ -339,12 +347,13 @@ public class BookServiceTests
     {
         // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var existingBook = new Book
         {
             Id          = bookId,
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2008
         };
@@ -352,7 +361,7 @@ public class BookServiceTests
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code — Updated Edition",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Software Engineering",
             PublishYear = 2024
         };
@@ -391,7 +400,7 @@ public class BookServiceTests
         {
             ISBN        = "9780132350884",
             Title       = "Ghost Book",
-            Author      = "Nobody",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Fiction",
             PublishYear = 2020
         };

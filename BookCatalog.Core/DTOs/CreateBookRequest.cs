@@ -13,9 +13,8 @@ public record CreateBookRequest
     [MaxLength(100, ErrorMessage = "Title is too long. It cannot exceed 100 characters.")]
     public string Title { get; init; } = string.Empty;
 
-    [Required(ErrorMessage = "The author's name is required.")]
-    [MaxLength(50, ErrorMessage = "Author name is too long. It cannot exceed 50 characters.")]
-    public string Author { get; init; } = string.Empty;
+    [Required(ErrorMessage = "The author ID is required.")]
+    public Guid AuthorId { get; init; }
 
     [Required(ErrorMessage = "Genre is required to help categorize the book.")]
     [MaxLength(30, ErrorMessage = "Genre cannot exceed 30 characters.")]
