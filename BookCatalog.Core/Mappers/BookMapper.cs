@@ -12,10 +12,11 @@ public static class BookMapper
             Id = book.Id,
             ISBN = book.ISBN,
             Title = book.Title,
-            Author = book.Author,
+            AuthorName = book.Author?.Name ?? "Unknown",
             Genre = book.Genre,
             PublishYear = book.PublishYear,
-            Description = book.Description
+            Description = book.Description,
+            IsAvailable = book.IsAvailable
         };
     }
 
@@ -25,7 +26,7 @@ public static class BookMapper
         {
             ISBN = request.ISBN,
             Title = request.Title,
-            Author = request.Author,
+            AuthorId = request.AuthorId,
             Genre = request.Genre,
             PublishYear = request.PublishYear,
             Description = request.Description
@@ -36,7 +37,7 @@ public static class BookMapper
     {
         book.ISBN = request.ISBN;
         book.Title = request.Title;
-        book.Author = request.Author;
+        book.AuthorId = request.AuthorId;
         book.Genre = request.Genre;
         book.PublishYear = request.PublishYear;
         book.Description = request.Description;

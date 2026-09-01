@@ -174,3 +174,89 @@ Week 1 started as a single `BookCatalog.API` project with everything in one plac
 * **Comments: explain why, never what.** The codebase uses comments in two places, both intentional. In `InMemoryBookRepository.GetAllAsync`, the inline step comments (`// 1. Apply Filters`, `// 2. Get the Total Count`, `// 3. Apply Pagination`) do describe *what* the steps are — but the method is implementing an algorithm where the sequence order carries real semantic weight (filtering before counting before paginating is a deliberate decision documented in `## Pagination and Filtering`). Those comments exist to make the sequence explicit at a glance. By contrast, the comment `// ConcurrentDictionary is thread-safe for web applications` explains *why* that specific type was chosen over a plain `Dictionary<K,V>` — that is a pure why-comment and would be lost if the code were left to speak for itself.
 
 * **Method length: `GetAllAsync` does three things, and that is the boundary.** `InMemoryBookRepository.GetAllAsync` applies filters, computes the total count, and paginates — three sequential steps. The method is long enough that comments mark each step, but it is not extractable into smaller private methods without making the data flow harder to follow (each step depends on the result of the previous one, and they all operate on the same `IEnumerable<Book>` query variable). `BookService`'s methods are all short precisely because the query logic was pushed down to the repository. If `BookService` were also doing filtering and pagination, the "and" test would have failed and extraction would have been necessary.
+
+## Week 3: Moving to a Relational Database with Entity Framework Core
+
+### Why the Data Model Is Shaped This Way
+
+The original `Book` entity stored the author's name as a raw string. That was fine for a single-entity CRUD API backed by an in-memory dictionary, but it collapses the moment you need to answer questions like "show me all books by this author" or "update the author's biography in one place." A flat string means duplicated data, inconsistent casing, and no way to attach metadata (like a biography) to the author without denormalizing it onto every book row.
+
+The data model was normalized into four entities: `Author`, `Book`, `User`, and `Loan`.
+
+* **`Author` as a first-class entity** — separating the author into its own table means an author's name and biography live in exactly one row. The one-to-many relationship (`Author.Books ↔ Book.AuthorId`) guarantees that every book points to a real, validated author. If the author's name changes (a pen-name update, a spelling correction), it changes in one place, and every `BookResponse` that resolves `book.Author?.Name` picks up the fix immediately.
+* **`User` as a standalone entity** — users exist independently of books. An email uniqueness constraint at the database level prevents duplicate accounts without relying on application-layer checks that could race under concurrent requests. The `User` entity is deliberately thin right now (just `Email` and `FullName`) — it will grow when authentication is added, but starting with a minimal surface avoids speculative fields that never get used.
+* **`Loan` as a transactional history table** — a `Loan` row is not a "current state" flag; it is a historical record of "User X borrowed Book Y at time T." Marking a book as returned means setting `ReturnedAt`, not deleting the row. This design preserves the full borrowing history for analytics, dispute resolution, and auditing. The alternative — a boolean `IsCurrentlyBorrowed` on `Book` — would lose all historical data and make questions like "who had this book last month?" unanswerable. `IsAvailable` on `Book` is a denormalized convenience flag that avoids a subquery on every book listing; it must be kept in sync with `Loan.ReturnedAt`, which is a known maintenance burden worth accepting for read performance.
+* **`RowVersion` (optimistic concurrency token)** — the `[Timestamp]` attribute on `Book.RowVersion` enables EF Core's built-in optimistic concurrency. When two users try to update the same book simultaneously, the second save will throw a `DbUpdateConcurrencyException` because the `RowVersion` value will have changed. This is cheaper than pessimistic locking (no `SELECT ... FOR UPDATE`) and is the correct strategy for a web API where conflicts are rare but catastrophic when silent.
+
+### The Decision to Use SQL Server (and the Trade-Offs)
+
+SQL Server was chosen because it is the default relational database for the Microsoft stack. EF Core's SQL Server provider is the most mature, best-documented, and most widely deployed in production .NET applications. The trade-offs are real:
+
+* **Cost and licensing** — SQL Server is not free at scale. For a learning project this is irrelevant (SQL Server Developer Edition and LocalDB are free), but in production, licensing costs are a genuine reason teams migrate to PostgreSQL. The EF Core provider for PostgreSQL (`Npgsql.EntityFrameworkCore.PostgreSQL`) is a near drop-in replacement — the `DbContext` and model configuration would barely change, which is one of EF Core's strongest selling points.
+* **Portability** — SQL Server runs natively on Windows and Linux (via Docker or direct install), but the operational ecosystem (SSMS, SQL Agent, linked servers) is Windows-centric. If the project were cloud-native from day one, Azure SQL or AWS RDS for SQL Server would be the deployment target. For local development, LocalDB or a Docker container is sufficient.
+* **Feature fit** — SQL Server's full-text search, temporal tables, and JSON support are all features this project may eventually need. PostgreSQL has equivalents (and arguably better JSON support), but SQL Server's integration with the .NET toolchain (e.g., `dotnet ef` commands, Visual Studio's SQL Server Object Explorer) reduces friction during development.
+
+The decision was pragmatic, not dogmatic. The `ApplicationDbContext` is the only class that knows about SQL Server. Swapping to PostgreSQL requires changing one NuGet package and one line in `Program.cs` — no domain or service code changes. (Note: Any existing migrations containing SQL Server-specific types or annotations would also need to be regenerated and validated for the new provider).
+
+### Q31. How much of your business logic changed when you swapped in-memory storage for a database? What does that number tell you?
+
+**`BookService` — minimal business logic changed.** Initially, the storage swap required zero logic changes. However, as the data model matured to include relational integrity (specifically, an `AuthorId` foreign key), the business logic *had* to evolve. We added validation in `CreateBookAsync` and `UpdateBookAsync` to verify that the author actually exists (via a new `AuthorExistsAsync` repository method) before persisting the book. We also updated `UpdateBookAsync` to reload the `Book` from the repository after a save, ensuring its navigation properties (like `Author.Name`) are accurately reflected in the final response. The core architecture held up beautifully, but relational realities required the service to be slightly more aware of data dependencies.
+
+**`BooksController` — zero lines changed.** It delegates to `IBookService` and maps return values to HTTP status codes. It has no knowledge of storage.
+
+**What did change (and the honest count):**
+
+| File | Lines Changed | Reason |
+|---|---|---|
+| `Book.cs` (model) | ~8 lines | Replaced `string Author` with `Guid AuthorId` + navigation property. Added `IsAvailable`, `LoanHistory`, `RowVersion`. |
+| `BookResponse.cs` (DTO) | 2 lines | `Author` → `AuthorName`, added `IsAvailable`. |
+| `CreateBookRequest.cs` (DTO) | 2 lines | `string Author` → `Guid AuthorId`. |
+| `UpdateBookRequest.cs` (DTO) | 2 lines | Same as above. |
+| `BookMapper.cs` (mapper) | 3 lines | Map `AuthorId` instead of `Author`, resolve `Author?.Name ?? "Unknown"`, map `IsAvailable`. |
+| `InMemoryBookRepository.cs` | 1 line | Search filter: `b.Author.ToLower()` → `b.Author?.Name?.ToLower()`. |
+
+Total: ~18 lines across 6 files. Of those 18, zero are in `BookService` or `BooksController`.
+
+**What that number tells you:** the changes were *domain corrections*, not storage adaptations. The old `Book` model was wrong — it modeled "author" as a string when it is semantically an entity. That lie was invisible while the entire system was a single-entity CRUD API, but it became untenable the moment a second entity (`Loan`) needed to reference both books and users. The storage swap itself (dictionary → database) required zero changes to the orchestration layer. The `IBookRepository` abstraction paid for itself exactly as designed — the service layer was immune to the infrastructure churn. If the domain model had been correctly normalized from Week 1, the change count would have been zero everywhere above the repository layer.
+
+### Q32. Which of your Week 2 tests broke, and were they testing the right thing?
+
+**Every `BookServiceTests` test that constructed a `Book` or a DTO with `Author = "..."` failed to compile.** That was 11 out of 13 `BookServiceTests` methods (only the two `DeleteBookAsync` tests survived unchanged because they never construct a `Book` with an author field). All 6 `BookValidationTests` that built `CreateBookRequest` or `UpdateBookRequest` objects also failed to compile.
+
+The breakage was *compilation errors*, not runtime assertion failures. The property `Author` on `Book` changed from `string` to `Author?` (a navigation object), so every line that wrote `Author = "Robert C. Martin"` became a type mismatch. Similarly, the DTOs changed from `Author = "..."` to `AuthorId = Guid.NewGuid()`.
+
+**Were they testing the right thing?** Yes — and the compilation failures prove it. The tests that broke were constructing domain objects and DTOs inline. When the domain model changed shape, those tests immediately surfaced the incompatibility at compile time, not at runtime in production. A test that compiles against a stale domain model is worse than useless — it gives false confidence. The fact that the tests broke loudly and immediately is exactly the behavior you want.
+
+**What the fix looked like:**
+
+* Every `Book` construction replaced `Author = "Eric Evans"` with `AuthorId = authorId` and (where the test asserts the mapped author name) `Author = new Author { Id = authorId, Name = "Eric Evans" }`.
+* Every `CreateBookRequest` and `UpdateBookRequest` replaced `Author = "..."` with `AuthorId = Guid.NewGuid()`.
+* Every assertion that checked `result.Author` changed to `result.AuthorName`.
+
+No test logic changed — the same scenarios, the same Arrange/Act/Assert structure, the same Moq setups. Only the data shapes were updated. This confirms the tests were testing *behavior* (does the service correctly map, delegate, and short-circuit?), not *data structure* (does the `Book` class have a string called `Author`?). The data structure changed; the behavior did not; the test logic did not.
+
+**One test deserves special mention:** `GetBookByIdAsync_WhenBookHasNoDescription_ReturnsMappedResponseWithNullDescription` originally set `Author = "Anonymous"`. After the change, it sets `AuthorId = Guid.NewGuid()` with no `Author` navigation property — meaning `book.Author` is `null`. This accidentally tests a new code path: `book.Author?.Name ?? "Unknown"` now resolves to `"Unknown"` for this test, which is the correct defensive behavior when the navigation property is not loaded. The test still passes because it only asserts `Description` is null, but it now also exercises the null-author fallback without intending to. This is a happy accident, not a designed outcome — a dedicated test for the `"Unknown"` fallback should be added.
+
+### Q33. Your catalog now has ten million books. Which endpoint dies first, and why?
+
+**`GET /api/books?searchTerm=...` dies first.** Every other endpoint is either a single-row lookup by primary key (`GET /api/books/{id}`, `PUT`, `DELETE`) or a write operation (`POST`). Those scale linearly with row count but remain fast because they hit the clustered index. The search endpoint is the outlier.
+
+**Why it dies:**
+
+1. **No index can help `LIKE '%term%'`.** The `SearchTerm` filter produces `WHERE Title LIKE '%term%' OR Author.Name LIKE '%term%'`. The leading wildcard (`%term%`) makes every B-tree index on `Title` and `Author.Name` useless — the database must perform a full table scan of 10 million rows on every request. At 10M rows with average row sizes of ~500 bytes, that is roughly 5 GB of data the engine must read, even for a single search query.
+
+2. **The `COUNT(*)` doubles the cost.** The current implementation counts total matching rows (`totalCount = query.Count()`) *and* fetches the page. Without careful query construction, EF Core may execute two separate full scans: one for the count, one for the paginated results. At 10M rows, two full scans per request is fatal under any meaningful concurrent load.
+
+3. **The `JOIN` to `Authors` multiplies the scan.** The search also checks `Author.Name`, which means the query must join `Books` and `Authors`. With 10M books and potentially hundreds of thousands of authors, the join itself is cheap (foreign key index), but scanning 10M joined rows for a substring match is not.
+
+4. **`OFFSET` pagination compounds the problem.** If a user searches and navigates to page 100 with `PageSize = 50`, the query must `OFFSET 4950 ROWS FETCH NEXT 50 ROWS ONLY`. The database scans 5,000 rows to discard 4,950 and return 50. At page 5,000, it scans 250,000 rows. Combined with the full-text scan, this produces a query that takes seconds, not milliseconds.
+
+**What would fix it:**
+
+* **SQL Server Full-Text Search** — replace `LIKE '%term%'` with `CONTAINS(Title, @term)` or `FREETEXT(Title, @term)`. Full-text indexes use inverted word lists, reducing text search from O(n) to O(log n) with relevance ranking. This is a schema + query change, not an architecture change.
+* **Elasticsearch / Meilisearch sidecar** — for advanced search (fuzzy matching, typo tolerance, faceted filtering), offload search to a dedicated engine and use the database only for transactional writes and single-row reads. This is an architecture change.
+* **Keyset pagination** — replace `OFFSET/FETCH` with `WHERE Id > @lastSeenId ORDER BY Id FETCH NEXT 50 ROWS ONLY`. This eliminates the O(n) skip cost and makes page 5,000 as fast as page 1. This changes the API contract (clients send a cursor, not a page number).
+* **Materialized search columns** — add a computed column `SearchText = Title + ' ' + Author.Name` with a non-clustered index. This avoids the join for search but trades write performance (the column must be maintained on insert/update).
+
+The search endpoint is the first to die because it is the only one that combines three scaling anti-patterns: full table scan, cross-table join, and offset pagination — all on the hottest read path.
+

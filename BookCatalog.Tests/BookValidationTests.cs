@@ -196,7 +196,7 @@ public class BookValidationTests
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Technology",
             PublishYear = 2008
         };
@@ -219,7 +219,7 @@ public class BookValidationTests
         {
             ISBN        = "9780132350884",
             Title       = "Future Book",
-            Author      = "Time Traveler",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Science Fiction",
             PublishYear = 3000
         };
@@ -249,7 +249,7 @@ public class BookValidationTests
         {
             ISBN        = "9780132350884",
             Title       = "Bad Year",
-            Author      = "Someone",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Fiction",
             PublishYear = 1300 // below minYear of 1400
         };
@@ -278,7 +278,7 @@ public class BookValidationTests
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Technology",
             PublishYear = 2008
         };
@@ -302,7 +302,7 @@ public class BookValidationTests
         {
             ISBN        = "9780132350884",
             Title       = "Future Edition",
-            Author      = "Robert C. Martin",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Technology",
             PublishYear = 3000
         };

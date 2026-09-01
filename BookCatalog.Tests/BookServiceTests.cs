@@ -23,7 +23,11 @@ public class BookServiceTests
     {
         _mockRepo   = new Mock<IBookRepository>();
         _mockLogger = new Mock<ILogger<BookService>>();
-        _sut        = new BookService(_mockRepo.Object, _mockLogger.Object);
+
+        // By default, assume the author exists for create/update scenarios
+        _mockRepo.Setup(r => r.AuthorExistsAsync(It.IsAny<Guid>())).ReturnsAsync(true);
+
+        _sut = new BookService(_mockRepo.Object, _mockLogger.Object);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -35,11 +39,15 @@ public class BookServiceTests
     {
         // Arrange
         var parameters = new BookQueryParameters { PageNumber = 1, PageSize = 10 };
+        var author1Id = Guid.NewGuid();
+        var author2Id = Guid.NewGuid();
         var books = new List<Book>
         {
-            new() { Id = Guid.NewGuid(), Title = "Clean Code", Author = "Robert C. Martin",
+            new() { Id = Guid.NewGuid(), Title = "Clean Code", AuthorId = author1Id,
+                    Author = new Author { Id = author1Id, Name = "Robert C. Martin" },
                     ISBN = "9780132350884", Genre = "Technology", PublishYear = 2008 },
-            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", Author = "Andrew Hunt",
+            new() { Id = Guid.NewGuid(), Title = "The Pragmatic Programmer", AuthorId = author2Id,
+                    Author = new Author { Id = author2Id, Name = "Andrew Hunt" },
                     ISBN = "9780135957059", Genre = "Technology", PublishYear = 2019 }
         };
         _mockRepo
@@ -69,7 +77,7 @@ public class BookServiceTests
         {
             Id          = Guid.NewGuid(),
             Title       = $"Book {i}",
-            Author      = "Author",
+            AuthorId    = Guid.NewGuid(),
             ISBN        = "9780132350884",
             Genre       = "Technology",
             PublishYear = 2020
@@ -165,11 +173,13 @@ public class BookServiceTests
     {
         // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var book = new Book
         {
             Id          = bookId,
             Title       = "Domain-Driven Design",
-            Author      = "Eric Evans",
+            AuthorId    = authorId,
+            Author      = new Author { Id = authorId, Name = "Eric Evans" },
             ISBN        = "9780321125217",
             Genre       = "Technology",
             PublishYear = 2003,
@@ -186,7 +196,7 @@ public class BookServiceTests
         Assert.NotNull(result);
         Assert.Equal(bookId, result.Id);
         Assert.Equal("Domain-Driven Design", result.Title);
-        Assert.Equal("Eric Evans", result.Author);
+        Assert.Equal("Eric Evans", result.AuthorName);
         Assert.Equal("9780321125217", result.ISBN);
         Assert.Equal(2003, result.PublishYear);
         Assert.Equal("Tackling Complexity in the Heart of Software", result.Description);
@@ -197,13 +207,15 @@ public class BookServiceTests
     [Fact]
     public async Task GetBookByIdAsync_WhenBookHasNoDescription_ReturnsMappedResponseWithNullDescription()
     {
-        // Arrange — Description is optional on the domain model; the response must preserve null
+        // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var book = new Book
         {
             Id          = bookId,
             Title       = "No Description Book",
-            Author      = "Anonymous",
+            AuthorId    = authorId,
+            Author      = new Author { Id = authorId, Name = "Anonymous" },
             ISBN        = "9780132350884",
             Genre       = "Technology",
             PublishYear = 2010,
@@ -219,7 +231,35 @@ public class BookServiceTests
         // Assert — null must be mapped as-is, not converted to empty string or omitted
         Assert.NotNull(result);
         Assert.Null(result.Description);
+    }
 
+    [Fact]
+    public async Task GetBookByIdAsync_WhenBookAuthorIsNull_ReturnsMappedResponseWithUnknownAuthor()
+    {
+        // Arrange
+        var bookId = Guid.NewGuid();
+        var book = new Book
+        {
+            Id          = bookId,
+            Title       = "Missing Author Book",
+            AuthorId    = Guid.NewGuid(),
+            Author      = null, // Navigation property not loaded
+            ISBN        = "9780132350884",
+            Genre       = "Technology",
+            PublishYear = 2010,
+            Description = "Test"
+        };
+        
+        _mockRepo
+            .Setup(repo => repo.GetByIdAsync(bookId))
+            .ReturnsAsync(book);
+
+        // Act
+        var result = await _sut.GetBookByIdAsync(bookId);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Unknown", result.AuthorName);
         _mockRepo.Verify(r => r.GetByIdAsync(bookId), Times.Once);
     }
 
@@ -249,11 +289,12 @@ public class BookServiceTests
     public async Task CreateBookAsync_WithValidRequest_ReturnsMappedBookResponse()
     {
         // Arrange
+        var authorId = Guid.NewGuid();
         var request = new CreateBookRequest
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2008,
             Description = "A Handbook of Agile Software Craftsmanship"
@@ -265,7 +306,8 @@ public class BookServiceTests
             Id          = Guid.NewGuid(),
             ISBN        = request.ISBN,
             Title       = request.Title,
-            Author      = request.Author,
+            AuthorId    = request.AuthorId,
+            Author      = new Author { Id = request.AuthorId, Name = "Robert C. Martin" },
             Genre       = request.Genre,
             PublishYear = request.PublishYear,
             Description = request.Description
@@ -281,7 +323,7 @@ public class BookServiceTests
         Assert.NotNull(result);
         Assert.Equal(persistedBook.Id, result.Id);
         Assert.Equal("Clean Code", result.Title);
-        Assert.Equal("Robert C. Martin", result.Author);
+        Assert.Equal("Robert C. Martin", result.AuthorName);
         Assert.Equal(2008, result.PublishYear);
 
         // Prove CreateAsync was called with a Book (not bypassed)
@@ -292,11 +334,12 @@ public class BookServiceTests
     public async Task CreateBookAsync_WithValidRequest_MapsRequestFieldsToBookEntity()
     {
         // Arrange — verify the mapper (ToBook) correctly transfers all fields to the entity
+        var authorId = Guid.NewGuid();
         var request = new CreateBookRequest
         {
             ISBN        = "9780135957059",
             Title       = "The Pragmatic Programmer",
-            Author      = "Andrew Hunt",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2019
         };
@@ -310,7 +353,7 @@ public class BookServiceTests
                 Id          = Guid.NewGuid(),
                 ISBN        = request.ISBN,
                 Title       = request.Title,
-                Author      = request.Author,
+                AuthorId    = request.AuthorId,
                 Genre       = request.Genre,
                 PublishYear = request.PublishYear
             });
@@ -322,7 +365,7 @@ public class BookServiceTests
         Assert.NotNull(capturedBook);
         Assert.Equal(request.ISBN, capturedBook!.ISBN);
         Assert.Equal(request.Title, capturedBook.Title);
-        Assert.Equal(request.Author, capturedBook.Author);
+        Assert.Equal(request.AuthorId, capturedBook.AuthorId);
         Assert.Equal(request.Genre, capturedBook.Genre);
         Assert.Equal(request.PublishYear, capturedBook.PublishYear);
 
@@ -339,12 +382,13 @@ public class BookServiceTests
     {
         // Arrange
         var bookId = Guid.NewGuid();
+        var authorId = Guid.NewGuid();
         var existingBook = new Book
         {
             Id          = bookId,
             ISBN        = "9780132350884",
             Title       = "Clean Code",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Technology",
             PublishYear = 2008
         };
@@ -352,7 +396,7 @@ public class BookServiceTests
         {
             ISBN        = "9780132350884",
             Title       = "Clean Code — Updated Edition",
-            Author      = "Robert C. Martin",
+            AuthorId    = authorId,
             Genre       = "Software Engineering",
             PublishYear = 2024
         };
@@ -374,7 +418,7 @@ public class BookServiceTests
 
         // Prove both repo calls were made (Verify does not enforce ordering;
         // the test name and AAA structure communicate the expected sequence)
-        _mockRepo.Verify(r => r.GetByIdAsync(bookId),      Times.Once);
+        _mockRepo.Verify(r => r.GetByIdAsync(bookId),      Times.Exactly(2));
         _mockRepo.Verify(r => r.UpdateAsync(existingBook), Times.Once);
     }
 
@@ -391,7 +435,7 @@ public class BookServiceTests
         {
             ISBN        = "9780132350884",
             Title       = "Ghost Book",
-            Author      = "Nobody",
+            AuthorId    = Guid.NewGuid(),
             Genre       = "Fiction",
             PublishYear = 2020
         };
