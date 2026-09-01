@@ -66,6 +66,12 @@ public class GlobalExceptionHandler(
             title = "Conflict";
             detail = conflictEx.Message;
         }
+        else if (exception is InvalidOperationException invalidOpEx)
+        {
+            statusCode = StatusCodes.Status409Conflict;
+            title = "Conflict";
+            detail = invalidOpEx.Message;
+        }
 
         httpContext.Response.Clear();
         httpContext.Response.StatusCode = statusCode;
