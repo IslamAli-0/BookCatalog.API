@@ -259,4 +259,25 @@ No test logic changed — the same scenarios, the same Arrange/Act/Assert struct
 * **Materialized search columns** — add a computed column `SearchText = Title + ' ' + Author.Name` with a non-clustered index. This avoids the join for search but trades write performance (the column must be maintained on insert/update).
 
 The search endpoint is the first to die because it is the only one that combines three scaling anti-patterns: full table scan, cross-table join, and offset pagination — all on the hottest read path.
-
+
+### Q21-24. Transactions & Concurrency
+
+**21. What do the letters in ACID mean, in your own words?**
+* **Atomicity**: All or nothing. If a multi-step operation fails halfway, the database rolls back to the starting state. No partial updates.
+* **Consistency**: The database goes from one valid state to another. Constraints (like foreign keys) are never violated.
+* **Isolation**: Concurrent transactions don't interfere with each other. If two people update a row at the exact same time, the DB ensures the result makes sense (usually by making one wait).
+* **Durability**: Once a transaction is committed, it stays committed. A power failure a millisecond later won't lose the data.
+
+**22. Which operation in your project needs a transaction, and what breaks without one?**
+Borrowing a book needs a transaction. We must set the book's `IsAvailable` flag to `false` AND insert a new `Loan` record. Without a transaction, if the database crashes right after updating the book but before inserting the loan, the book becomes permanently "borrowed" by nobody. The data is corrupted.
+
+**23. Two users try to borrow the last copy of a book at the same time. Walk through exactly what happens in your code. Are you sure?**
+Yes, I am sure. This is handled gracefully by EF Core's Optimistic Concurrency Control using the `RowVersion` timestamp column on the `Book` entity.
+1. User A and User B both fetch the book. `IsAvailable` is `true`. They both get the same `RowVersion` (e.g., `0x001`).
+2. User A's thread reaches `SaveChangesAsync()` first. EF Core generates `UPDATE Books SET IsAvailable = 0 WHERE Id = @id AND RowVersion = 0x001`. The database updates the row and auto-increments the `RowVersion` to `0x002`.
+3. User B's thread reaches `SaveChangesAsync()`. EF Core generates `UPDATE Books SET IsAvailable = 0 WHERE Id = @id AND RowVersion = 0x001`. The database finds 0 matching rows because the `RowVersion` is now `0x002`. 
+4. EF Core detects 0 rows updated and throws a `DbUpdateConcurrencyException`. The explicit `IDbContextTransaction` in our `LendingRepository` catches the exception, rolls back the transaction, and throws it up the stack.
+5. The API returns a 409 Conflict. User A gets the book, User B gets denied. No double-borrowing occurs.
+
+**24. What is a race condition? Where is yours?**
+A race condition happens when the outcome of a program depends on the unpredictable timing of concurrent threads. In this system, the race condition is the "check-then-act" flaw: checking if a book is available, then acting to borrow it. Without the `RowVersion` concurrency token and transaction, two threads could check `IsAvailable` at the same time (both see `true`), and both act (both borrow it), violating the real-world constraint that one physical book can only be lent to one person.
