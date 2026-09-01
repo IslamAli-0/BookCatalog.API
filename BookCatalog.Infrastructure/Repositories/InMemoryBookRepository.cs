@@ -23,7 +23,7 @@ public class InMemoryBookRepository : IBookRepository
         if (!string.IsNullOrWhiteSpace(parameters.SearchTerm))
         {
             var term = parameters.SearchTerm.ToLower();
-            query = query.Where(b => b.Title.ToLower().Contains(term) || b.Author.ToLower().Contains(term));
+            query = query.Where(b => b.Title.ToLower().Contains(term) || (b.Author?.Name?.ToLower().Contains(term) ?? false));
         }
 
         // 2. Get the Total Count (AFTER filtering, BEFORE paginating)
