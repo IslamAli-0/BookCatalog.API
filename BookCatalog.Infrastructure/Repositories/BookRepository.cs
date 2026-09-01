@@ -6,12 +6,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BookCatalog.Infrastructure.Repositories;
 
-public class EfBookRepository(ApplicationDbContext context) : IBookRepository
+public class BookRepository(ApplicationDbContext context) : IBookRepository
 {
     public async Task<(IEnumerable<Book> Books, int TotalCount)> GetAllAsync(BookQueryParameters parameters)
     {
         var query = context.Books
             .Include(b => b.Author)
+            .AsNoTracking()
             .AsQueryable();
 
         // 1. Apply Filters
