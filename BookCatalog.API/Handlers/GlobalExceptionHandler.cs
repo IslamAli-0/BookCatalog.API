@@ -38,8 +38,25 @@ public class GlobalExceptionHandler(
             return false;
         }
 
+        int statusCode = StatusCodes.Status500InternalServerError;
+        string title = "Server Error";
+        string detail = "An unexpected error occurred while processing your request. Please try again later.";
+
+        if (exception is ArgumentException argEx)
+        {
+            statusCode = StatusCodes.Status400BadRequest;
+            title = "Validation Error";
+            detail = argEx.Message;
+        }
+        else if (exception is InvalidOperationException invEx)
+        {
+            statusCode = StatusCodes.Status409Conflict;
+            title = "Conflict";
+            detail = invEx.Message;
+        }
+
         httpContext.Response.Clear();
-        httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        httpContext.Response.StatusCode = statusCode;
 
         // Use IProblemDetailsService so AddProblemDetails() formatting pipeline is honored
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
@@ -48,9 +65,9 @@ public class GlobalExceptionHandler(
             Exception = exception,
             ProblemDetails =
             {
-                Status = StatusCodes.Status500InternalServerError,
-                Title = "Server Error",
-                Detail = "An unexpected error occurred while processing your request. Please try again later.",
+                Status = statusCode,
+                Title = title,
+                Detail = detail,
                 Instance = httpContext.Request.Path,
                 Extensions = { ["traceId"] = httpContext.TraceIdentifier }
             }
