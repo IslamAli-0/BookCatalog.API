@@ -21,6 +21,9 @@ builder.Services.AddScoped<IBookRepository, BookRepository>();
 
 builder.Services.AddScoped<IBookService, BookService>();
 
+builder.Services.AddScoped<ILendingRepository, LendingRepository>();
+builder.Services.AddScoped<ILendingService, LendingService>();
+
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
@@ -45,6 +48,21 @@ using (var scope = app.Services.CreateScope())
                 throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
             }
             await Task.Delay(2000);
+        }
+    }
+
+    // Seed Data for Authors and Users
+    if (app.Environment.IsDevelopment())
+    {
+        if (!await context.Authors.AnyAsync())
+        {
+            context.Authors.Add(new BookCatalog.Core.Models.Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
+            await context.SaveChangesAsync();
+        }
+        if (!await context.Users.AnyAsync())
+        {
+            context.Users.Add(new BookCatalog.Core.Models.User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
+            await context.SaveChangesAsync();
         }
     }
 }
