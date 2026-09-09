@@ -13,8 +13,18 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // EF Core — register the DbContext with the SQL Server provider
+// EnableRetryOnFailure: automatically retries transient errors (connection drops, timeouts,
+// deadlocks) up to 3 times with exponential back-off before surfacing as an error.
+// Only safe because all writes are wrapped in explicit transactions or are single-operation;
+// EF Core tracks whether a retry is inside a user-managed transaction and skips auto-retry
+// in that case to avoid retrying non-idempotent committed work.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sqlOptions => sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 3,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorNumbersToAdd: null)));
 
 // Scoped lifetime — DbContext is scoped, so the repository must be too
 builder.Services.AddScoped<IBookRepository, BookRepository>();
