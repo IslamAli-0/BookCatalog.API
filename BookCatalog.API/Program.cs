@@ -27,6 +27,16 @@ builder.Services.AddScoped<ILendingService, LendingService>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
+// Health Checks
+// /health/live  — is the process running? (no DB check, used by container orchestrators for restarts)
+// /health/ready — can the service do its job? (includes DB reachability, used to gate traffic)
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+builder.Services.AddHealthChecks()
+    .AddSqlServer(
+        connectionString: connectionString,
+        name: "sql-server",
+        tags: ["ready"]);
+
 var app = builder.Build();
 
 // Auto-apply pending EF Core migrations on startup (required for Docker one-command setup)
@@ -75,6 +85,15 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Liveness: just "is the process alive?" — no dependency checks, always fast
+app.MapHealthChecks("/health/live");
+
+// Readiness: "can the service actually do its job?" — only runs checks tagged "ready" (SQL Server)
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = hc => hc.Tags.Contains("ready")
+});
 
 app.UseHttpsRedirection();
 
