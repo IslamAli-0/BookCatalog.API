@@ -4,8 +4,16 @@ using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure Serilog for structured JSON logging
+builder.Host.UseSerilog((context, configuration) =>
+    configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(new Serilog.Formatting.Compact.CompactJsonFormatter()));
 
 builder.Services.AddControllers();
 
@@ -77,6 +85,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Use Serilog for request logging (correlates logs with requests)
+app.UseSerilogRequestLogging();
 
 app.UseAuthorization();
 
