@@ -1,4 +1,5 @@
 using BookCatalog.API.Handlers;
+using BookCatalog.API.Options;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Data;
@@ -12,9 +13,26 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Configuration validation — fail fast at startup if connection string is missing.
+// ValidateDataAnnotations checks [Required] on DatabaseOptions properties.
+// ValidateOnStart runs the validation before the first request, not lazily on first use.
+// Without this, a missing connection string causes a cryptic NullReferenceException
+// on the first DB call instead of a clear startup error.
+builder.Services.AddOptions<DatabaseOptions>()
+    .BindConfiguration(DatabaseOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// Resolve the validated connection string once for use below
+var connectionString = builder.Services
+    .BuildServiceProvider()
+    .GetRequiredService<Microsoft.Extensions.Options.IOptions<DatabaseOptions>>()
+    .Value
+    .DefaultConnection;
+
 // EF Core — register the DbContext with the SQL Server provider
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(connectionString));
 
 // Scoped lifetime — DbContext is scoped, so the repository must be too
 builder.Services.AddScoped<IBookRepository, BookRepository>();

@@ -361,3 +361,13 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+
+.env
+
+# Personal study guides (local only, not tracked)
+WEEK1_STUDY_GUIDE.md
+WEEK2_STUDY_GUIDE.md
+WEEK3_STUDY_GUIDE.md
+SERILOG_STUDY_GUIDE.md
+CONFIG_VALIDATION_STUDY_GUIDE.md
