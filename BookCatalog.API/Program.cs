@@ -1,4 +1,5 @@
 using BookCatalog.API.Handlers;
+using BookCatalog.API.Options;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Models;
 using BookCatalog.Core.Services;
@@ -14,6 +15,23 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Configuration validation — fail fast at startup if connection string is missing.
+// ValidateDataAnnotations checks [Required] on DatabaseOptions properties.
+// ValidateOnStart runs the validation before the first request, not lazily on first use.
+// Without this, a missing connection string causes a cryptic NullReferenceException
+// on the first DB call instead of a clear startup error.
+builder.Services.AddOptions<DatabaseOptions>()
+    .BindConfiguration(DatabaseOptions.SectionName)
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// Resolve the validated connection string once for use below
+var connectionString = builder.Services
+    .BuildServiceProvider()
+    .GetRequiredService<Microsoft.Extensions.Options.IOptions<DatabaseOptions>>()
+    .Value
+    .DefaultConnection;
+
 // EF Core — register the DbContext with the SQL Server provider
 // EnableRetryOnFailure: automatically retries transient errors (connection drops, timeouts,
 // deadlocks) up to 3 times with exponential back-off before surfacing as an error.
@@ -22,7 +40,7 @@ builder.Services.AddSwaggerGen();
 // in that case to avoid retrying non-idempotent committed work.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        connectionString,
         sqlOptions => sqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
             maxRetryDelay: TimeSpan.FromSeconds(5),
@@ -42,7 +60,6 @@ builder.Services.AddProblemDetails();
 // Health Checks
 // /health/live  — is the process running? (no DB check, used by container orchestrators for restarts)
 // /health/ready — can the service do its job? (includes DB reachability, used to gate traffic)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
 builder.Services.AddHealthChecks()
     .AddSqlServer(
         connectionString: connectionString,
