@@ -1,5 +1,7 @@
+using BookCatalog.Core.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookCatalog.API.Handlers;
 
@@ -48,19 +50,19 @@ public class GlobalExceptionHandler(
             title = "Validation Error";
             detail = argEx.Message;
         }
-        else if (exception is BookCatalog.Core.Exceptions.NotFoundException notFoundEx)
+        else if (exception is NotFoundException notFoundEx)
         {
             statusCode = StatusCodes.Status404NotFound;
             title = "Not Found";
             detail = notFoundEx.Message;
         }
-        else if (exception is Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        else if (exception is DbUpdateConcurrencyException)
         {
             statusCode = StatusCodes.Status409Conflict;
             title = "Conflict";
             detail = "The resource was modified by another request. Please retry.";
         }
-        else if (exception is BookCatalog.Core.Exceptions.ConflictException conflictEx)
+        else if (exception is ConflictException conflictEx)
         {
             statusCode = StatusCodes.Status409Conflict;
             title = "Conflict";

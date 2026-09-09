@@ -1,3 +1,4 @@
+using BookCatalog.Core.Exceptions;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Models;
 using BookCatalog.Infrastructure.Data;
@@ -14,100 +15,108 @@ public class LendingRepository(ApplicationDbContext context) : ILendingRepositor
 
     public async Task<Loan> BorrowBookAsync(Guid bookId, Guid userId)
     {
-        // Using an explicit transaction to satisfy Week 3 assignment requirements ("Choose one such operation in your domain and make it safe").
-        await using var transaction = await context.Database.BeginTransactionAsync();
-
-        try
+        var strategy = context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var book = await context.Books.FirstOrDefaultAsync(b => b.Id == bookId);
+            // Using an explicit transaction to satisfy Week 3 assignment requirements ("Choose one such operation in your domain and make it safe").
+            await using var transaction = await context.Database.BeginTransactionAsync();
 
-            if (book == null)
+            try
             {
-                throw new BookCatalog.Core.Exceptions.NotFoundException($"Book with ID {bookId} was not found.");
+                var book = await context.Books.FirstOrDefaultAsync(b => b.Id == bookId);
+
+                if (book == null)
+                {
+                    throw new NotFoundException($"Book with ID {bookId} was not found.");
+                }
+
+                if (!book.IsAvailable)
+                {
+                    throw new ConflictException("Book is already borrowed.");
+                }
+
+                book.IsAvailable = false;
+
+                const int LoanPeriodDays = 14;
+                var now = DateTime.UtcNow;
+                var loan = new Loan
+                {
+                    BookId = bookId,
+                    UserId = userId,
+                    BorrowedAt = now,
+                    DueDate = now.AddDays(LoanPeriodDays)
+                };
+
+                context.Loans.Add(loan);
+
+                // Since Book has a [Timestamp] RowVersion column, if another transaction successfully updated IsAvailable
+                // at the exact same time, this SaveChangesAsync will throw a DbUpdateConcurrencyException,
+                // keeping our data perfectly safe from the race condition.
+                await context.SaveChangesAsync();
+
+                // Load navigations for mapping
+                await context.Entry(loan).Reference(l => l.Book).LoadAsync();
+                await context.Entry(loan).Reference(l => l.User).LoadAsync();
+
+                await transaction.CommitAsync();
+
+                return loan;
             }
-
-            if (!book.IsAvailable)
+            catch (Exception)
             {
-                throw new BookCatalog.Core.Exceptions.ConflictException("Book is already borrowed.");
+                await transaction.RollbackAsync();
+                throw;
             }
-
-            book.IsAvailable = false;
-
-            const int LoanPeriodDays = 14;
-            var now = DateTime.UtcNow;
-            var loan = new Loan
-            {
-                BookId = bookId,
-                UserId = userId,
-                BorrowedAt = now,
-                DueDate = now.AddDays(LoanPeriodDays)
-            };
-
-            context.Loans.Add(loan);
-
-            // Since Book has a [Timestamp] RowVersion column, if another transaction successfully updated IsAvailable
-            // at the exact same time, this SaveChangesAsync will throw a DbUpdateConcurrencyException,
-            // keeping our data perfectly safe from the race condition.
-            await context.SaveChangesAsync();
-
-            // Load navigations for mapping
-            await context.Entry(loan).Reference(l => l.Book).LoadAsync();
-            await context.Entry(loan).Reference(l => l.User).LoadAsync();
-
-            await transaction.CommitAsync();
-
-            return loan;
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        });
     }
 
     public async Task<Loan> ReturnBookAsync(Guid bookId)
     {
-        await using var transaction = await context.Database.BeginTransactionAsync();
-
-        try
+        var strategy = context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var book = await context.Books.FirstOrDefaultAsync(b => b.Id == bookId);
+            await using var transaction = await context.Database.BeginTransactionAsync();
 
-            if (book == null)
+            try
             {
-                throw new BookCatalog.Core.Exceptions.NotFoundException($"Book with ID {bookId} was not found.");
-            }
+                var book = await context.Books.FirstOrDefaultAsync(b => b.Id == bookId);
 
-            if (book.IsAvailable)
+                if (book == null)
+                {
+                    throw new NotFoundException($"Book with ID {bookId} was not found.");
+                }
+
+                if (book.IsAvailable)
+                {
+                    throw new ConflictException("Book is not currently borrowed.");
+                }
+
+                var activeLoan = await context.Loans
+                    .FirstOrDefaultAsync(l => l.BookId == bookId && l.ReturnedAt == null);
+
+                if (activeLoan == null)
+                {
+                    throw new NotFoundException("Active loan loan record not found for this book.");
+                }
+
+                book.IsAvailable = true;
+                activeLoan.ReturnedAt = DateTime.UtcNow;
+
+                await context.SaveChangesAsync();
+
+                await context.Entry(activeLoan).Reference(l => l.Book).LoadAsync();
+                await context.Entry(activeLoan).Reference(l => l.User).LoadAsync();
+
+                await transaction.CommitAsync();
+
+                return activeLoan;
+            }
+            catch (Exception)
             {
-                throw new BookCatalog.Core.Exceptions.ConflictException("Book is not currently borrowed.");
+                await transaction.RollbackAsync();
+                throw;
             }
-
-            var activeLoan = await context.Loans
-                .FirstOrDefaultAsync(l => l.BookId == bookId && l.ReturnedAt == null);
-
-            if (activeLoan == null)
-            {
-                throw new BookCatalog.Core.Exceptions.NotFoundException("Active loan record not found for this book.");
-            }
-
-            book.IsAvailable = true;
-            activeLoan.ReturnedAt = DateTime.UtcNow;
-
-            await context.SaveChangesAsync();
-
-            await context.Entry(activeLoan).Reference(l => l.Book).LoadAsync();
-            await context.Entry(activeLoan).Reference(l => l.User).LoadAsync();
-
-            await transaction.CommitAsync();
-
-            return activeLoan;
-        }
-        catch (Exception)
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        });
     }
 
     public async Task<IEnumerable<Loan>> GetBookLoanHistoryAsync(Guid bookId)
