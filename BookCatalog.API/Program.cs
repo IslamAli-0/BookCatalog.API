@@ -1,8 +1,10 @@
 using BookCatalog.API.Handlers;
 using BookCatalog.Core.Interfaces;
+using BookCatalog.Core.Models;
 using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -66,12 +68,12 @@ using (var scope = app.Services.CreateScope())
     {
         if (!await context.Authors.AnyAsync())
         {
-            context.Authors.Add(new BookCatalog.Core.Models.Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
+            context.Authors.Add(new Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
             await context.SaveChangesAsync();
         }
         if (!await context.Users.AnyAsync())
         {
-            context.Users.Add(new BookCatalog.Core.Models.User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
+            context.Users.Add(new User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
             await context.SaveChangesAsync();
         }
     }
@@ -86,11 +88,17 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Liveness: just "is the process alive?" — no dependency checks, always fast
-app.MapHealthChecks("/health/live");
+// Liveness: just "is the process alive?" — no dependency checks, always fast.
+// Explicitly exclude "ready" tagged checks (SQL Server) so this stays true even when DB is down.
+// Used by container orchestrators to decide whether to RESTART the container.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = hc => !hc.Tags.Contains("ready")
+});
 
-// Readiness: "can the service actually do its job?" — only runs checks tagged "ready" (SQL Server)
-app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+// Readiness: "can the service actually do its job?" — only runs checks tagged "ready" (SQL Server).
+// Used by orchestrators to decide whether to SEND TRAFFIC to this instance.
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = hc => hc.Tags.Contains("ready")
 });
