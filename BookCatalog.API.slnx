@@ -2,5 +2,6 @@
   <Project Path="BookCatalog.API/BookCatalog.API.csproj" />
   <Project Path="BookCatalog.Core/BookCatalog.Core.csproj" />
   <Project Path="BookCatalog.Infrastructure/BookCatalog.Infrastructure.csproj" />
+  <Project Path="BookCatalog.IntegrationTests/BookCatalog.IntegrationTests.csproj" />
   <Project Path="BookCatalog.Tests/BookCatalog.Tests.csproj" />
 </Solution>
