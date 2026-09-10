@@ -11,6 +11,13 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Graceful shutdown — give in-flight requests up to 30 seconds to complete
+// when the process receives SIGTERM (e.g., docker compose down, Ctrl+C).
+// Default is 30s in .NET 8+, but we set it explicitly so the intent is documented
+// and won't silently change if defaults shift in a future runtime version.
+builder.Services.Configure<HostOptions>(options =>
+    options.ShutdownTimeout = TimeSpan.FromSeconds(30));
+
 // Configure Serilog for structured JSON logging
 builder.Host.UseSerilog((context, configuration) =>
     configuration
@@ -146,5 +153,17 @@ app.UseSerilogRequestLogging();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Log application lifecycle events so graceful shutdown is verifiable in the logs.
+// After docker compose down or Ctrl+C, you should see:
+//   "Application is shutting down..." followed by "Application stopped."
+// If an in-flight request was being processed, its response will complete before "stopped."
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+lifetime.ApplicationStarted.Register(() =>
+    Log.Information("Application started. Graceful shutdown timeout: {ShutdownTimeout}s", 30));
+lifetime.ApplicationStopping.Register(() =>
+    Log.Information("Application is shutting down. Completing in-flight requests..."));
+lifetime.ApplicationStopped.Register(() =>
+    Log.Information("Application stopped. All in-flight requests completed."));
 
 app.Run();
