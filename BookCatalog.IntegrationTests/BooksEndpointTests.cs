@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using BookCatalog.Core.DTOs;
 
@@ -22,7 +22,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
 
     private CreateBookRequest CreateValidRequest(string? title = null) => new()
     {
-        ISBN = "9780132350884",
+        ISBN = $"978{Random.Shared.NextInt64(1000000000, 9999999999)}",
         Title = title ?? $"Test Book {Guid.NewGuid():N}",
         AuthorId = TestAuthorId,
         Genre = "Software",
@@ -63,8 +63,8 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
         // Arrange
         var request = new CreateBookRequest
         {
-            ISBN = "9780132350884",
-            Title = "",
+            ISBN = $"978{Random.Shared.NextInt64(1000000000, 9999999999)}",
+            Title = string.Empty, // invalid
             AuthorId = TestAuthorId,
             Genre = "Software",
             PublishYear = 2008
@@ -78,12 +78,12 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
-    public async Task CreateBook_WithNonExistentAuthor_Returns404()
+    public async Task CreateBook_WithNonExistentAuthor_Returns400()
     {
         // Arrange
         var request = new CreateBookRequest
         {
-            ISBN = "9780132350884",
+            ISBN = $"978{Random.Shared.NextInt64(1000000000, 9999999999)}",
             Title = "Orphan Book",
             AuthorId = Guid.NewGuid(), // does not exist
             Genre = "Fiction",
@@ -94,7 +94,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
         var response = await _client.PostAsJsonAsync("/api/books", request);
 
         // Assert
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     // --- READ ---

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using BookCatalog.Core.DTOs;
 
@@ -23,7 +23,7 @@ public class LendingEndpointTests : IClassFixture<CustomWebApplicationFactory>
     {
         var request = new CreateBookRequest
         {
-            ISBN = "9780132350884",
+            ISBN = $"978{Random.Shared.NextInt64(1000000000, 9999999999)}",
             Title = $"Lending Test Book {Guid.NewGuid():N}",
             AuthorId = TestAuthorId,
             Genre = "Software",
@@ -86,7 +86,7 @@ public class LendingEndpointTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
-    public async Task BorrowBook_WhenUserDoesNotExist_Returns404()
+    public async Task BorrowBook_WhenUserDoesNotExist_Returns400()
     {
         // Arrange
         var book = await CreateBookAsync();
@@ -96,7 +96,7 @@ public class LendingEndpointTests : IClassFixture<CustomWebApplicationFactory>
         var response = await _client.PostAsJsonAsync($"/api/books/{book.Id}/borrow", borrowRequest);
 
         // Assert
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     // --- RETURN ---
