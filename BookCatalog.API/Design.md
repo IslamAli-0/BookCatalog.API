@@ -281,3 +281,57 @@ Yes, I am sure. This is handled gracefully by EF Core's Optimistic Concurrency C
 
 **24. What is a race condition? Where is yours?**
 A race condition happens when the outcome of a program depends on the unpredictable timing of concurrent threads. In this system, the race condition is the "check-then-act" flaw: checking if a book is available, then acting to borrow it. Without the `RowVersion` concurrency token and transaction, two threads could check `IsAvailable` at the same time (both see `true`), and both act (both borrow it), violating the real-world constraint that one physical book can only be lent to one person.
+## Week 4: Production Readiness and Defensibility
+
+This final week changed the fundamental question of the project. It was no longer "does it work on my machine?", but "what happens when it breaks at 3 AM and nobody is watching?". The focus shifted entirely to operability, resilience, and proving that the system actually works from the outside.
+
+### Health Checks (Liveness vs. Readiness)
+I implemented two distinct health endpoints (`/health/live` and `/health/ready`), and I kept them strictly separated using tagging.
+* **Why:** A liveness check answers "is the process running?". A readiness check answers "can the service do its job?". If the database goes down, the readiness check *must* fail so the orchestrator stops sending traffic to the API. But the liveness check *must* pass. If the liveness check fails during a database outage, the orchestrator will endlessly kill and restart the API container, achieving nothing and burning CPU. I explicitly excluded SQL Server from the liveness check to prevent this restart loop.
+
+### Structured Logging with Serilog
+I replaced the default ASP.NET Core logger with Serilog configured with the `CompactJsonFormatter` and `UseSerilogRequestLogging()`.
+* **Why:** At 3 AM, a wall of text is useless. Logs must be machine-readable (JSON) so log aggregators can parse and index them. By using `UseSerilogRequestLogging()`, every log entry generated during a request automatically inherits the `TraceId` and HTTP context. If a user says "it failed around 2 PM," I don't need to guess which logs belong to them — I filter the JSON logs by their specific `TraceId` and see the exact sequence of events, perfectly correlated. I consciously chose `Warning` for business logic violations (e.g., trying to borrow an already borrowed book) because the system is behaving correctly by denying it, and `Error` strictly for actual system faults (like database timeouts or null references).
+
+### Configuration Validation (Fail Fast)
+I implemented the Options pattern for the database connection string and enforced it with `ValidateOnStart()`.
+* **Why:** If a configuration value is missing, the application must crash immediately at startup. Without `ValidateOnStart()`, the API would start successfully, report as "Healthy", and only crash with a cryptic `NullReferenceException` when the first user tries to make a request. Failing fast guarantees that a misconfigured container never receives live traffic.
+
+### Resilience and EF Core Retries
+I configured EF Core with `EnableRetryOnFailure()` to automatically retry transient database errors up to 3 times.
+* **Why:** The network drops. The database restarts. These are normal events in production, not exceptions. If a momentary network blip occurs, the user shouldn't see a 500 Server Error. EF Core intercepts the transient fault and silently retries the operation with an exponential back-off.
+* **The Catch (Execution Strategies):** EF Core disables automatic retries if you use explicit transactions (like `BeginTransactionAsync`), because it doesn't know if the work inside the transaction is idempotent. To make retries safe for our Lending flow, I had to wrap the explicit transactions in `context.Database.CreateExecutionStrategy().ExecuteAsync(...)`. This explicitly tells EF Core what block of code is safe to replay if a transient error occurs during the commit.
+
+### Graceful Shutdown
+I explicitly configured `HostOptions.ShutdownTimeout = TimeSpan.FromSeconds(30)` and wired up `IHostApplicationLifetime` logging hooks.
+* **Why:** When `docker compose down` sends a `SIGTERM` signal, the server shouldn't abruptly sever all active connections and leave database writes half-finished. Kestrel stops accepting new connections but allows in-flight requests 30 seconds to finish their work before killing the process. I added the explicit config to document the intent, and the logging hooks to prove in the logs that the shutdown sequence is actually happening.
+
+### Integration Testing with Testcontainers
+I built a full integration test suite (`BookCatalog.IntegrationTests`) that tests the API from the outside using real HTTP requests against a real SQL Server database spun up via Testcontainers.
+* **Why:** Unit tests (with a mocked repository) prove that the service layer delegates correctly. But they do *not* prove that the SQL queries are valid, that the database schema matches the code, or that the JSON serialization works. The integration tests treat the API as a black box. By spinning up an ephemeral SQL Server container for the test run, the tests guarantee that if they pass, the real system will work in production. They prove the contract.
+
+## Project Retrospective (The Whole Month)
+
+### What the Platform Does
+The Book Catalog Platform is a RESTful API that manages a collection of books, authors, and users, and orchestrates a complete lending lifecycle. It ensures data integrity (e.g., preventing double-borrowing via optimistic concurrency), tracks full loan history, and enforces business rules at the boundary. It is built to be observable, resilient, and container-native.
+
+### Architecture Evolution
+* **Week 1:** A single-project CRUD API backed by a thread-safe in-memory dictionary. Focused on DTOs, validation, and REST semantics.
+* **Week 2:** Split into a physical 3-layer architecture (`Core`, `Infrastructure`, `API`) to enforce the Dependency Inversion Principle. Added global exception handling.
+* **Week 3:** Replaced the in-memory store with EF Core and SQL Server. Normalized the domain model, introduced optimistic concurrency, and handled relational data.
+* **Week 4:** Wrapped the system in production-grade concerns: health checks, structured logging, integration testing, config validation, and graceful shutdown.
+
+### The Single Worst Technical Decision This Month
+**Modeling "Author" as a string in Week 1.**
+* **The Cost:** It was a false shortcut. It made the Week 1 CRUD operations trivial, but it fundamentally misrepresented the domain. An author is an entity, not a value. When we moved to a real database in Week 3, that lie broke 17 unit tests and required cascading changes across the DTOs, Models, and Mappers. If I had modeled it correctly from day one, the swap to EF Core would have required zero orchestration changes.
+
+### The Decision I Am Most Confident About
+**Strict separation of DTOs and Domain Models.**
+* **The Argument Against It:** "It's repetitive boilerplate. You're writing three classes (Model, Request DTO, Response DTO) and mapping code just to move data from the database to the client."
+* **Why I'm Confident:** It saved the API contract. When the domain model changed drastically in Week 3 (adding `IsAvailable`, `RowVersion`, and navigation properties), the API clients didn't notice. The internal database schema evolved, but the DTOs shielded the public contract. Exposing the domain models directly would have leaked database concerns (like concurrency tokens) straight to the JSON response.
+
+### Known Limitations: What Breaks First Under Load?
+As noted earlier, `GET /api/books?searchTerm=...` is the bottleneck. The combination of `LIKE '%term%'` (which bypasses indexes and forces a full table scan), `OFFSET` pagination, and relational joins means this endpoint will choke the database at high volume. The immediate fix would be SQL Server Full-Text Search, but the long-term architectural fix would be offloading search to a dedicated read-optimized engine like Elasticsearch.
+
+### What I Learned
+I learned the difference between code that compiles and code that is operable. Writing a feature that works on my machine is only 20% of the job. The other 80% is making sure it can be deployed predictably, that it fails loudly during configuration rather than silently in production, that it survives transient network blips without bothering the user, and that when it inevitably does break at 3 AM, it leaves a JSON trail that tells me exactly why.
