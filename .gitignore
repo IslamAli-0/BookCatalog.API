@@ -363,6 +363,10 @@ MigrationBackup/
 FodyWeavers.xsd
 
 
+# ASP.NET Core configuration files (use user-secrets or env vars for secrets)
+**/appsettings.json
+**/appsettings.*.json
+
 .env
 
 # Personal study guides (local only, not tracked)
