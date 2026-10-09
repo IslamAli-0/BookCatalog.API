@@ -40,11 +40,13 @@ jobs:
     - name: Install EF Core CLI
       run: dotnet tool install --global dotnet-ef
 
-    # Runs EF migrations from CI runner if accessible.
-    # continue-on-error is set to true because BookCatalog.API also executes
-    # context.Database.MigrateAsync() on startup inside Container Apps using Managed Identity.
+    - name: Allow GitHub Runner IP to Azure SQL
+      run: |
+        RUNNER_IP=$(curl -s https://api.ipify.org)
+        echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
+        az sql server firewall-rule create --resource-group rg-workspace-api-dev --server sqlserver-islam-dev-002 --name GitHubRunnerRule --start-ip-address $RUNNER_IP --end-ip-address $RUNNER_IP
+
     - name: Apply Database Migrations
-      continue-on-error: true
       env:
         DB_CONNECTION_STRING: ${{ secrets.DB_CONNECTION_STRING }}
       run: |
@@ -53,6 +55,11 @@ jobs:
           --project BookCatalog.Infrastructure \
           --startup-project BookCatalog.API \
           --connection "$CLEAN_CONN"
+
+    - name: Remove GitHub Runner IP from Azure SQL
+      if: always()
+      run: |
+        az sql server firewall-rule delete --resource-group rg-workspace-api-dev --server sqlserver-islam-dev-002 --name GitHubRunnerRule
 
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
