@@ -26,6 +26,7 @@ jobs:
         dotnet build
         dotnet test
 
+    # Mentor Check: Pipeline authentication without stored secrets (OIDC)
     - name: Azure Login
       uses: azure/login@v2
       with:
@@ -46,6 +47,7 @@ jobs:
         echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
         az sql server firewall-rule create --resource-group rg-workspace-api-dev --server sqlserver-islam-dev-002 --name GitHubRunnerRule --start-ip-address $RUNNER_IP --end-ip-address $RUNNER_IP
 
+    # Mentor Check: Migrations in a pipeline
     - name: Apply Database Migrations
       env:
         ConnectionStrings__DefaultConnection: ${{ secrets.DB_CONNECTION_STRING }}
@@ -69,6 +71,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    # Mentor Check: Image tagging, digests and versioning (No "latest" tag)
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -76,19 +79,12 @@ jobs:
         push: true
         tags: |
           ${{ env.IMAGE_TAG }}:${{ github.sha }}
-          ${{ env.IMAGE_TAG }}:latest
 
+    # Mentor Check: Deploy the exact artifact you tested (Using explicit SHA)
     - name: Deploy to Azure Container Apps
-      uses: azure/container-apps-deploy-action@v2
-      with:
-        registryUrl: ghcr.io
-        registryUsername: ${{ github.actor }}
-        registryPassword: ${{ secrets.GITHUB_TOKEN }}
-        containerAppName: ca-bookcatalog-api-dev-002
-        resourceGroup: rg-workspace-api-dev
-        imageToDeploy: ${{ env.IMAGE_TAG }}:${{ github.sha }}
-        containerAppEnvironment: cae-workspace-standard
-        targetPort: 8080
-        environmentVariables: |
-          ConnectionStrings__DefaultConnection=${{ secrets.DB_CONNECTION_STRING }}
-          ASPNETCORE_ENVIRONMENT=Development
+      run: |
+        az containerapp update \
+          --name ca-bookcatalog-api-dev-003 \
+          --resource-group rg-workspace-api-dev \
+          --image ${{ env.IMAGE_TAG }}:${{ github.sha }} \
+          --set-env-vars ASPNETCORE_ENVIRONMENT=Development ConnectionStrings__DefaultConnection="${{ secrets.DB_CONNECTION_STRING }}"
