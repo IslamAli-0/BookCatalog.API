@@ -89,3 +89,6 @@ jobs:
         imageToDeploy: ${{ env.IMAGE_TAG }}:${{ github.sha }}
         containerAppEnvironment: cae-workspace-standard
         targetPort: 8080
+        environmentVariables: |
+          ConnectionStrings__DefaultConnection=${{ secrets.DB_CONNECTION_STRING }}
+          ASPNETCORE_ENVIRONMENT=Development
