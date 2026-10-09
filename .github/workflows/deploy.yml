@@ -50,8 +50,7 @@ jobs:
     # Migrations in a pipeline
     - name: Apply Database Migrations
       run: |
-        DB_TOKEN=$(az account get-access-token --resource https://database.windows.net --query accessToken -o tsv)
-        CONN_STR="Server=tcp:sqlserver-islam-dev-002.database.windows.net,1433;Initial Catalog=sqldb-workspace-api-002;Encrypt=True;TrustServerCertificate=False;ActiveDirectory Token=$DB_TOKEN;"
+        CONN_STR="Server=tcp:sqlserver-islam-dev-002.database.windows.net,1433;Initial Catalog=sqldb-workspace-api-002;Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Default;"
         export ConnectionStrings__DefaultConnection="$CONN_STR"
         dotnet ef database update \
           --project BookCatalog.Infrastructure \
