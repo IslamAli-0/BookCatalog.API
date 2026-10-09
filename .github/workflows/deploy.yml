@@ -79,3 +79,5 @@ jobs:
         containerAppName: ca-bookcatalog-api-dev-002
         resourceGroup: rg-workspace-api-dev
         imageToDeploy: ${{ env.IMAGE_TAG }}:${{ github.sha }}
+        containerAppEnvironment: cae-workspace-standard
+        targetPort: 8080
