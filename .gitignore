@@ -374,4 +374,11 @@ WEEK1_STUDY_GUIDE.md
 WEEK2_STUDY_GUIDE.md
 WEEK3_STUDY_GUIDE.md
 SERILOG_STUDY_GUIDE.md
-CONFIG_VALIDATION_STUDY_GUIDE.md
+CONFIG_VALIDATION_STUDY_GUIDE.md
+
+# Visual Studio Code
+.vscode/
+
+# Package and archive files
+*.zip
+*.tar.gz

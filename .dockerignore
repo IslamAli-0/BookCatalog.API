@@ -9,3 +9,8 @@
 **/*.md
 
 .env
+.vscode/
+infrastructure/
+.github/
+*.zip
+*.tar.gz
