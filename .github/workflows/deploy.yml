@@ -48,9 +48,10 @@ jobs:
 
     - name: Apply Database Migrations
       env:
-        DB_CONNECTION_STRING: ${{ secrets.DB_CONNECTION_STRING }}
+        ConnectionStrings__DefaultConnection: ${{ secrets.DB_CONNECTION_STRING }}
       run: |
-        CLEAN_CONN="${DB_CONNECTION_STRING//\"/}"
+        CLEAN_CONN="${ConnectionStrings__DefaultConnection//\"/}"
+        export ConnectionStrings__DefaultConnection="$CLEAN_CONN"
         dotnet ef database update \
           --project BookCatalog.Infrastructure \
           --startup-project BookCatalog.API \
