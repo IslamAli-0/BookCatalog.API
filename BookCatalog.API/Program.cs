@@ -87,23 +87,23 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    var maxRetries = 5;
-    for (int retry = 1; retry <= maxRetries; retry++)
-    {
-        try
-        {
-            await context.Database.MigrateAsync();
-            break;
-        }
-        catch (Exception ex)
-        {
-            if (retry == maxRetries)
-            {
-                throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
-            }
-            await Task.Delay(2000);
-        }
-    }
+    // var maxRetries = 5;
+    // for (int retry = 1; retry <= maxRetries; retry++)
+    // {
+    //     try
+    //     {
+    //         await context.Database.MigrateAsync();
+    //         break;
+    //     }
+    //     catch (Exception ex)
+    //     {
+    //         if (retry == maxRetries)
+    //         {
+    //             throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
+    //         }
+    //         await Task.Delay(2000);
+    //     }
+    // }
 
     // Seed Data for Authors and Users
     if (app.Environment.IsDevelopment())
