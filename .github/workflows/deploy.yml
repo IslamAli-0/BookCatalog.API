@@ -1,0 +1,66 @@
+name: Deploy Workspace API to Azure
+
+on:
+  push:
+    branches: [ "main" ] 
+
+permissions:
+  id-token: write 
+  packages: write 
+  contents: read
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x' 
+
+    - name: Build and Test
+      run: |
+        dotnet build
+        dotnet test
+
+    - name: Install EF Core CLI
+      run: dotnet tool install --global dotnet-ef
+      
+    - name: Apply Database Migrations
+      run: dotnet ef database update --project BookCatalog.Infrastructure --startup-project BookCatalog.API --connection "${{ secrets.DB_CONNECTION_STRING }}"
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository_owner }}/workspace-task-api:${{ github.sha }}
+          ghcr.io/${{ github.repository_owner }}/workspace-task-api:latest
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Deploy to Azure Container Apps
+      uses: azure/container-apps-deploy-action@v2
+      with:
+        registryUrl: ghcr.io
+        registryUsername: ${{ github.actor }}
+        registryPassword: ${{ secrets.GITHUB_TOKEN }}
+        containerAppName: ca-bookcatalog-api-dev-002
+        resourceGroup: rg-workspace-api-dev
+        imageToDeploy: ghcr.io/${{ github.repository_owner }}/workspace-task-api:${{ github.sha }}
