@@ -88,7 +88,7 @@ jobs:
         fi
         BLOB_CONN=$(az storage account show-connection-string --name stbookcatalogdev001 --resource-group rg-workspace-api-dev --query connectionString -o tsv)
         az containerapp update \
-          --name ca-bookcatalog-api-dev-002 \
+          --name ca-bookcatalog-api-dev-003 \
           --resource-group rg-workspace-api-dev \
           --image ${{ env.IMAGE_TAG }}:${{ github.sha }} \
           --set-env-vars \
