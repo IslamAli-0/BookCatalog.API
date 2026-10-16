@@ -10,4 +10,6 @@ public record BookResponse
     public int PublishYear { get; init; }
     public string? Description { get; init; }
     public bool IsAvailable { get; init; }
+    public string? CoverImageUrl { get; init; }
+    public string? SamplePdfUrl { get; init; }
 }

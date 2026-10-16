@@ -9,6 +9,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Author> Authors => Set<Author>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Loan> Loans => Set<Loan>();
+    public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +58,12 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
             entity.HasIndex(b => b.ISBN)
                   .IsUnique();
+
+            entity.Property(b => b.CoverImageUrl)
+                  .HasMaxLength(2048);
+
+            entity.Property(b => b.SamplePdfUrl)
+                  .HasMaxLength(2048);
         });
 
         // User -> Loans (One-to-Many)
@@ -95,6 +102,23 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                   .WithMany(u => u.Loans)
                   .HasForeignKey(l => l.UserId)
                   .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // IdempotencyRecord configuration
+        modelBuilder.Entity<IdempotencyRecord>(entity =>
+        {
+            entity.HasKey(r => r.Id);
+
+            entity.Property(r => r.IdempotencyKey)
+                  .IsRequired()
+                  .HasMaxLength(128);
+
+            entity.Property(r => r.ResponseJson)
+                  .IsRequired();
+
+            // Unique constraint: same key can only be stored once per operation
+            entity.HasIndex(r => r.IdempotencyKey)
+                  .IsUnique();
         });
     }
 }

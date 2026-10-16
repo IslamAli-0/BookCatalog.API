@@ -1,17 +1,24 @@
 // 1. Parameters
 param location string = resourceGroup().location
-param appName string = 'ca-bookcatalog-api-dev-002'
+param appName string = 'ca-bookcatalog-api-dev-003'
 
 param sqlAdminUser string = 'islamadmin'
 @secure()
 param sqlAdminPassword string
 
-// Temporary public bootstrap image until GitHub Actions pipeline pushes image to GHCR
-param containerImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
+// Microsoft Entra (Azure AD) Admin for Azure SQL - Enables GitHub Actions pipeline passwordless migrations
+param entraAdminLogin string = 'GitHubActions-Workspace'
+param entraAdminObjectId string = '442fdd1f-d6e8-41ad-a04b-33eb55b74b96'
 
-// 2. Container Apps Managed Environment (Brand-new name = Standard Environment)
+// Container image - defaults to current deployed GHCR image
+param containerImage string = 'ghcr.io/islamali-0/workspace-task-api:c3f64331af0cd15f1b00590c9e9b11a97d8cca52'
+
+// Storage account name must be globally unique, 3-24 lowercase alphanumeric chars
+param storageAccountName string = 'stbookcatalogdev001'
+
+// 2. Container Apps Managed Environment (Standard Environment / Express)
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-std-bookcatalog-dev'
+  name: 'cae-workspace-standard'
   location: location
   properties: {}
 }
@@ -23,6 +30,18 @@ resource sqlServer 'Microsoft.Sql/servers@2023-05-01-preview' = {
   properties: {
     administratorLogin: sqlAdminUser
     administratorLoginPassword: sqlAdminPassword
+  }
+}
+
+// 3.1. Azure SQL Entra ID (Azure AD) Administrator for Pipeline Authentication
+resource sqlEntraAdmin 'Microsoft.Sql/servers/administrators@2023-05-01-preview' = if (!empty(entraAdminObjectId)) {
+  parent: sqlServer
+  name: 'ActiveDirectory'
+  properties: {
+    administratorType: 'ActiveDirectory'
+    login: entraAdminLogin
+    sid: entraAdminObjectId
+    tenantId: subscription().tenantId
   }
 }
 
@@ -52,7 +71,40 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-05-01-preview' = {
   }
 }
 
-// 6. Azure Container App (Replaces App Service)
+// 6. Azure Storage Account (for Blob Storage — book-assets container)
+// Standard_LRS: locally-redundant storage, lowest cost, suitable for dev/staging.
+// StorageV2 (general-purpose v2) supports all blob tiers and features.
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageAccountName
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    // Disable anonymous (unauthenticated) blob access at account level.
+    // All access requires either a SAS token or authenticated identity.
+    allowBlobPublicAccess: false
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+  }
+}
+
+// 6.1. Blob Container: book-assets
+// Private access — all reads/writes require a SAS token or Managed Identity.
+resource bookAssetsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  name: '${storageAccountName}/default/book-assets'
+  dependsOn: [storageAccount]
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+// 6.2. Convenience: build the connection string from account name + key (used as env-var)
+// Using listKeys() at deploy-time avoids a separate "go fetch the key" step.
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+
+// 7. Azure Container App (Target deployed by deploy.yml)
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
@@ -64,7 +116,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       // Note: activeRevisionsMode: 'Multiple' requires a Workload Profile environment,
       // which is not available on Azure for Students subscriptions.
-      // Express environments (the only option here) use Single revision mode by default.
+      // Express environments use Single revision mode by default.
       ingress: {
         external: true
         targetPort: 8080
@@ -74,7 +126,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     template: {
       containers: [
         {
-          name: 'bookcatalog-api'
+          name: 'ca-bookcatalog-api-dev-003'
           image: containerImage
           resources: {
             cpu: json('0.25')
@@ -87,7 +139,13 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'ConnectionStrings__DefaultConnection'
-              value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${sqlDb.name};Authentication="Active Directory Default";'
+              value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${sqlDb.name};Encrypt=True;TrustServerCertificate=False;Authentication=Active Directory Default;'
+            }
+            {
+              // Storage connection string injected as env-var; ASP.NET Core reads it as
+              // IConfiguration["AzureBlobStorage:ConnectionString"] via double-underscore mapping.
+              name: 'AzureBlobStorage__ConnectionString'
+              value: storageConnectionString
             }
           ]
         }
@@ -100,7 +158,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// 7. Azure Key Vault
+// 8. Azure Key Vault
 resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
   name: 'kv-bookcatalog-dev-003'
   location: location
@@ -114,16 +172,41 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
   }
 }
 
-// 8. Grant the Container App permission to read secrets (Key Vault Secrets User)
+// 9. Grant the Container App permission to read secrets (Key Vault Secrets User)
 resource keyVaultContainerAppRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, containerApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
   scope: keyVault
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
+      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
     )
     principalId: containerApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
+
+// 10. Grant the Container App's Managed Identity access to the Storage Account
+//     Role: Storage Blob Data Contributor (can read/write blobs — useful for MI-based uploads)
+resource storageBlobContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, containerApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
+    )
+    principalId: containerApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// 11. Outputs for CI/CD Pipeline & Orchestration
+output containerAppName string = containerApp.name
+output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
+output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
+output sqlDatabaseName string = sqlDb.name
+output keyVaultName string = keyVault.name
+output containerAppPrincipalId string = containerApp.identity.principalId
+output storageAccountName string = storageAccount.name
+output storageBlobEndpoint string = storageAccount.properties.primaryEndpoints.blob

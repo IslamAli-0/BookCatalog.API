@@ -16,7 +16,9 @@ public static class BookMapper
             Genre = book.Genre,
             PublishYear = book.PublishYear,
             Description = book.Description,
-            IsAvailable = book.IsAvailable
+            IsAvailable = book.IsAvailable,
+            CoverImageUrl = book.CoverImageUrl,
+            SamplePdfUrl = book.SamplePdfUrl
         };
     }
 

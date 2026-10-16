@@ -30,7 +30,13 @@ public class LendingEndpointTests : IClassFixture<CustomWebApplicationFactory>
             PublishYear = 2008
         };
 
-        var response = await _client.PostAsJsonAsync("/api/books", request);
+        var message = new HttpRequestMessage(HttpMethod.Post, "/api/books")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await _client.SendAsync(message);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<BookResponse>())!;
     }

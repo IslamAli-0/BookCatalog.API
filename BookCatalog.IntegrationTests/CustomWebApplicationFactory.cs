@@ -32,6 +32,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             services.AddDbContext<ApplicationDbContext>(options =>
                 options.UseSqlServer(_dbContainer.GetConnectionString()));
 
+            var blobDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(BookCatalog.Core.Interfaces.IBlobService));
+            if (blobDescriptor != null)
+                services.Remove(blobDescriptor);
+            services.AddSingleton<BookCatalog.Core.Interfaces.IBlobService, FakeBlobService>();
+
             var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -39,6 +45,19 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         });
 
         builder.UseEnvironment("Development");
+    }
+
+    private class FakeBlobService : BookCatalog.Core.Interfaces.IBlobService
+    {
+        public Task<Uri> UploadAsync(string containerName, string blobPath, Stream content, string contentType, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new Uri($"https://127.0.0.1:10000/devstoreaccount1/{containerName}/{blobPath}"));
+        }
+
+        public Uri GenerateSasUri(string containerName, string blobPath, int validForMinutes = 15)
+        {
+            return new Uri($"https://127.0.0.1:10000/devstoreaccount1/{containerName}/{blobPath}?sv=2024-11-04&se=2026-10-16T12:15:00Z&sr=b&sp=cw&sig=fake");
+        }
     }
 
     public async Task InitializeAsync()
