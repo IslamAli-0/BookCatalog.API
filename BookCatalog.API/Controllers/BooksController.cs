@@ -71,45 +71,62 @@ public class BooksController(
         }
 
         // ── 3. Atomic creation: Book + IdempotencyRecord in one transaction ───
-        // EnableRetryOnFailure is configured on the DbContext, but EF will NOT
-        // auto-retry inside a user-managed transaction (correct behaviour).
-        using var tx = await db.Database.BeginTransactionAsync();
+        // Use CreateExecutionStrategy() to support user-initiated transactions with EnableRetryOnFailure
+        var strategy = db.Database.CreateExecutionStrategy();
 
-        BookResponse createdBook;
-        try
+        var (bookResult, isNewRecord) = await strategy.ExecuteAsync(async () =>
         {
-            createdBook = await bookService.CreateBookAsync(request);
-
-            var record = new IdempotencyRecord
-            {
-                Id             = Guid.NewGuid(),
-                IdempotencyKey = idempotencyKey,
-                ResponseJson   = JsonSerializer.Serialize(createdBook),
-                StatusCode     = StatusCodes.Status201Created,
-                CreatedAt      = DateTimeOffset.UtcNow
-            };
-
-            db.IdempotencyRecords.Add(record);
-            await db.SaveChangesAsync();
-            await tx.CommitAsync();
-        }
-        catch (DbUpdateException ex)
-            when (ex.InnerException?.Message.Contains("unique", StringComparison.OrdinalIgnoreCase) == true ||
-                  ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true)
-        {
-            // Race condition: a concurrent request committed the same key just before us.
-            await tx.RollbackAsync();
-
-            var raceRecord = await db.IdempotencyRecords
+            var cachedRecord = await db.IdempotencyRecords
                 .AsNoTracking()
                 .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey);
 
-            var cached = JsonSerializer.Deserialize<BookResponse>(raceRecord!.ResponseJson);
-            return StatusCode(raceRecord.StatusCode, cached);
+            if (cachedRecord != null)
+            {
+                var cached = JsonSerializer.Deserialize<BookResponse>(cachedRecord.ResponseJson);
+                return (cached!, false);
+            }
+
+            await using var tx = await db.Database.BeginTransactionAsync();
+            try
+            {
+                var createdBook = await bookService.CreateBookAsync(request);
+
+                var record = new IdempotencyRecord
+                {
+                    Id             = Guid.NewGuid(),
+                    IdempotencyKey = idempotencyKey,
+                    ResponseJson   = JsonSerializer.Serialize(createdBook),
+                    StatusCode     = StatusCodes.Status201Created,
+                    CreatedAt      = DateTimeOffset.UtcNow
+                };
+
+                db.IdempotencyRecords.Add(record);
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+
+                return (createdBook, true);
+            }
+            catch (DbUpdateException ex)
+                when (ex.InnerException?.Message.Contains("unique", StringComparison.OrdinalIgnoreCase) == true ||
+                      ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                await tx.RollbackAsync();
+
+                var raceRecord = await db.IdempotencyRecords
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey);
+
+                var cached = JsonSerializer.Deserialize<BookResponse>(raceRecord!.ResponseJson);
+                return (cached!, false);
+            }
+        });
+
+        if (isNewRecord)
+        {
+            return CreatedAtAction(nameof(GetById), new { id = bookResult.Id }, bookResult);
         }
 
-        // 201 Created + Location header pointing to the new resource.
-        return CreatedAtAction(nameof(GetById), new { id = createdBook.Id }, createdBook);
+        return StatusCode(StatusCodes.Status201Created, bookResult);
     }
 
     [HttpPut("{id:guid}")]
