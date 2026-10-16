@@ -1,6 +1,6 @@
 // 1. Parameters
 param location string = resourceGroup().location
-param appName string = 'ca-bookcatalog-api-dev-003'
+param appName string = 'ca-bookcatalog-api-dev-002'
 
 param sqlAdminUser string = 'islamadmin'
 @secure()
