@@ -82,10 +82,8 @@ jobs:
     # Deploy the exact artifact you tested (Using explicit SHA)
     - name: Deploy to Azure Container Apps
       run: |
-        SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
         az containerapp update \
           --name ca-bookcatalog-api-dev-003 \
           --resource-group rg-workspace-api-dev \
           --image ${{ env.IMAGE_TAG }}:${{ github.sha }} \
-          --revision-suffix "rev-$SHORT_SHA" \
-          --set-env-vars ASPNETCORE_ENVIRONMENT=Development ConnectionStrings__DefaultConnection="${{ secrets.DB_CONNECTION_STRING }}"
+          --set-env-vars ASPNETCORE_ENVIRONMENT=Development ConnectionStrings__DefaultConnection="${{ secrets.DB_CONNECTION_STRING }}"
