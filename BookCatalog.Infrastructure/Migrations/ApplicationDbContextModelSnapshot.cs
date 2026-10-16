@@ -51,6 +51,10 @@ namespace BookCatalog.Infrastructure.Migrations
                     b.Property<Guid>("AuthorId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
                     b.Property<string>("Description")
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
@@ -77,6 +81,10 @@ namespace BookCatalog.Infrastructure.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
+                    b.Property<string>("SamplePdfUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -90,6 +98,35 @@ namespace BookCatalog.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("Books");
+                });
+
+            modelBuilder.Entity("BookCatalog.Core.Models.IdempotencyRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("ResponseJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("StatusCode")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.ToTable("IdempotencyRecords");
                 });
 
             modelBuilder.Entity("BookCatalog.Core.Models.Loan", b =>

@@ -5,6 +5,8 @@ using BookCatalog.Core.Models;
 using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
+using BookCatalog.Infrastructure.Services;
+using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -40,12 +42,13 @@ builder.Services.AddOptions<DatabaseOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-// Resolve the validated connection string once for use below
-var connectionString = builder.Services
-    .BuildServiceProvider()
-    .GetRequiredService<Microsoft.Extensions.Options.IOptions<DatabaseOptions>>()
-    .Value
-    .DefaultConnection;
+// Read the connection string for DbContext and health check registration
+var connectionString = builder.Configuration
+    .GetSection(DatabaseOptions.SectionName)
+    .Get<DatabaseOptions>()?
+    .DefaultConnection
+    ?? builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? string.Empty;
 
 // EF Core — register the DbContext with the SQL Server provider
 // EnableRetryOnFailure: automatically retries transient errors (connection drops, timeouts,
@@ -80,6 +83,27 @@ builder.Services.AddHealthChecks()
         connectionString: connectionString,
         name: "sql-server",
         tags: ["ready"]);
+
+// ─── Azure Blob Storage ────────────────────────────────────────────────────────
+// BlobServiceClient is registered as Singleton: it is thread-safe and designed
+// to be shared. The connection string is read from AzureBlobStorage:ConnectionString
+// (set as an env var in production: AzureBlobStorage__ConnectionString).
+var blobConnectionString = builder.Configuration["AzureBlobStorage:ConnectionString"];
+if (!string.IsNullOrWhiteSpace(blobConnectionString))
+{
+    builder.Services.AddSingleton(new BlobServiceClient(blobConnectionString));
+}
+else
+{
+    // Fallback for local development without Azure Storage:
+    // use Azurite (local emulator) or any account you set in appsettings.Development.json.
+    // We register a Azurite default endpoint so the service compiles and starts even when
+    // the env-var is absent; SAS generation will still fail without real credentials.
+    builder.Services.AddSingleton(new BlobServiceClient(
+        "UseDevelopmentStorage=true"));
+}
+
+builder.Services.AddScoped<IBlobService, BlobService>();
 
 var app = builder.Build();
 
@@ -117,6 +141,43 @@ using (var scope = app.Services.CreateScope())
         {
             context.Users.Add(new User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
             await context.SaveChangesAsync();
+        }
+
+        // ── Seed sample blob assets ──────────────────────────────────────────
+        // Upload a placeholder cover image and a placeholder PDF so the
+        // container has working test assets out of the box in Development.
+        try
+        {
+            var blobService = scope.ServiceProvider.GetRequiredService<IBlobService>();
+            const string container = "book-assets";
+
+            // Sample cover (1x1 white JPEG — minimal valid JFIF)
+            var coverBytes = Convert.FromBase64String(
+                "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U" +
+                "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAARCAABAAEDASIA" +
+                "AhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUE/8QAIRAAAQMEAwEBAAAAAAAAAAAAAQID" +
+                "BAURBhIhMVH/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/a" +
+                "AAwDAQACEQMRAD8AsAAZAAAAAH//2Q==");
+            await using var coverStream = new MemoryStream(coverBytes);
+            await blobService.UploadAsync(container, "samples/sample-cover.jpg", coverStream, "image/jpeg");
+
+            // Sample PDF (minimal valid 1-page PDF)
+            var pdfBytes = System.Text.Encoding.ASCII.GetBytes(
+                "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
+                "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+                "3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n" +
+                "xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n" +
+                "0000000058 00000 n\n0000000115 00000 n\n" +
+                "trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF");
+            await using var pdfStream = new MemoryStream(pdfBytes);
+            await blobService.UploadAsync(container, "samples/sample-book.pdf", pdfStream, "application/pdf");
+
+            Log.Information("Sample blob assets seeded to container '{Container}'.", container);
+        }
+        catch (Exception ex)
+        {
+            // Do not crash startup if Azurite is not running locally — just warn.
+            Log.Warning(ex, "Could not seed sample blob assets (Azure Storage may not be reachable locally).");
         }
     }
 }

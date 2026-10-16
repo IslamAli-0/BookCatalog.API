@@ -1,11 +1,12 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using BookCatalog.Core.DTOs;
 
 namespace BookCatalog.IntegrationTests;
 
 /// <summary>
-/// Integration tests for Book CRUD operations.
+/// Integration tests for Book CRUD, Idempotency, and Blob Storage operations.
 /// Tests the full HTTP pipeline against a real SQL Server container.
 /// </summary>
 public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
@@ -30,16 +31,30 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
         Description = "A test book for integration testing."
     };
 
-    // --- CREATE ---
+    private async Task<HttpResponseMessage> PostBookAsync(CreateBookRequest request, string? idempotencyKey = null)
+    {
+        var message = new HttpRequestMessage(HttpMethod.Post, "/api/books")
+        {
+            Content = JsonContent.Create(request)
+        };
+        if (!string.IsNullOrEmpty(idempotencyKey))
+        {
+            message.Headers.Add("Idempotency-Key", idempotencyKey);
+        }
+        return await _client.SendAsync(message);
+    }
+
+    // --- CREATE & IDEMPOTENCY ---
 
     [Fact]
     public async Task CreateBook_WithValidData_Returns201AndBookResponse()
     {
         // Arrange
         var request = CreateValidRequest();
+        var key = Guid.NewGuid().ToString();
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/books", request);
+        var response = await PostBookAsync(request, key);
 
         // Assert
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -58,6 +73,43 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task CreateBook_WithoutIdempotencyKey_Returns400()
+    {
+        // Arrange
+        var request = CreateValidRequest();
+
+        // Act - no Idempotency-Key header provided
+        var response = await PostBookAsync(request, idempotencyKey: null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateBook_WithSameIdempotencyKey_ReturnsCachedResponseAndDoesNotDuplicate()
+    {
+        // Arrange
+        var request = CreateValidRequest();
+        var key = Guid.NewGuid().ToString();
+
+        // Act 1 — initial creation
+        var response1 = await PostBookAsync(request, key);
+        Assert.Equal(HttpStatusCode.Created, response1.StatusCode);
+        var book1 = await response1.Content.ReadFromJsonAsync<BookResponse>();
+
+        // Act 2 — replay exact same request with same idempotency key
+        var response2 = await PostBookAsync(request, key);
+        Assert.Equal(HttpStatusCode.Created, response2.StatusCode);
+        var book2 = await response2.Content.ReadFromJsonAsync<BookResponse>();
+
+        // Assert — replayed response is byte-for-byte / identical entity ID
+        Assert.NotNull(book1);
+        Assert.NotNull(book2);
+        Assert.Equal(book1.Id, book2.Id);
+        Assert.Equal(book1.ISBN, book2.ISBN);
+    }
+
+    [Fact]
     public async Task CreateBook_WithMissingTitle_Returns400()
     {
         // Arrange
@@ -71,7 +123,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/books", request);
+        var response = await PostBookAsync(request, Guid.NewGuid().ToString());
 
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -91,7 +143,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
         };
 
         // Act
-        var response = await _client.PostAsJsonAsync("/api/books", request);
+        var response = await PostBookAsync(request, Guid.NewGuid().ToString());
 
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -103,7 +155,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     public async Task GetBookById_WhenBookExists_Returns200()
     {
         // Arrange — create a book first
-        var createResponse = await _client.PostAsJsonAsync("/api/books", CreateValidRequest());
+        var createResponse = await PostBookAsync(CreateValidRequest(), Guid.NewGuid().ToString());
         var created = await createResponse.Content.ReadFromJsonAsync<BookResponse>();
 
         // Act
@@ -130,8 +182,8 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     public async Task GetAllBooks_ReturnsPaginatedResponse()
     {
         // Arrange — create two books
-        await _client.PostAsJsonAsync("/api/books", CreateValidRequest("Paginated Book 1"));
-        await _client.PostAsJsonAsync("/api/books", CreateValidRequest("Paginated Book 2"));
+        await PostBookAsync(CreateValidRequest("Paginated Book 1"), Guid.NewGuid().ToString());
+        await PostBookAsync(CreateValidRequest("Paginated Book 2"), Guid.NewGuid().ToString());
 
         // Act
         var response = await _client.GetAsync("/api/books?pageNumber=1&pageSize=10");
@@ -150,7 +202,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     public async Task UpdateBook_WithValidData_Returns200()
     {
         // Arrange
-        var createResponse = await _client.PostAsJsonAsync("/api/books", CreateValidRequest());
+        var createResponse = await PostBookAsync(CreateValidRequest(), Guid.NewGuid().ToString());
         var created = await createResponse.Content.ReadFromJsonAsync<BookResponse>();
 
         var updateRequest = new UpdateBookRequest
@@ -199,7 +251,7 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     public async Task DeleteBook_WhenBookExists_Returns204()
     {
         // Arrange
-        var createResponse = await _client.PostAsJsonAsync("/api/books", CreateValidRequest());
+        var createResponse = await PostBookAsync(CreateValidRequest(), Guid.NewGuid().ToString());
         var created = await createResponse.Content.ReadFromJsonAsync<BookResponse>();
 
         // Act
@@ -218,6 +270,58 @@ public class BooksEndpointTests : IClassFixture<CustomWebApplicationFactory>
     {
         // Act
         var response = await _client.DeleteAsync($"/api/books/{Guid.NewGuid()}");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // --- BLOB STORAGE UPLOAD PATTERNS ---
+
+    [Fact]
+    public async Task UploadViaServer_WithValidFile_Returns200AndSetsCoverImageUrl()
+    {
+        // Arrange
+        var createResponse = await PostBookAsync(CreateValidRequest(), Guid.NewGuid().ToString());
+        var created = await createResponse.Content.ReadFromJsonAsync<BookResponse>();
+
+        using var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xE0]);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        content.Add(fileContent, "file", "cover.jpg");
+
+        // Act
+        var response = await _client.PostAsync($"/api/books/{created!.Id}/upload-server?assetType=cover", content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var getResponse = await _client.GetAsync($"/api/books/{created.Id}");
+        var updated = await getResponse.Content.ReadFromJsonAsync<BookResponse>();
+        Assert.NotNull(updated?.CoverImageUrl);
+        Assert.Contains("cover.jpg", updated.CoverImageUrl);
+    }
+
+    [Fact]
+    public async Task GetSasToken_WhenBookExists_Returns200AndValidSasUri()
+    {
+        // Arrange
+        var createResponse = await PostBookAsync(CreateValidRequest(), Guid.NewGuid().ToString());
+        var created = await createResponse.Content.ReadFromJsonAsync<BookResponse>();
+
+        // Act
+        var response = await _client.PostAsync($"/api/books/{created!.Id}/sas-token?assetType=cover&fileName=direct.jpg", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.Contains("sasUri", json);
+    }
+
+    [Fact]
+    public async Task GetSasToken_WhenBookDoesNotExist_Returns404()
+    {
+        // Act
+        var response = await _client.PostAsync($"/api/books/{Guid.NewGuid()}/sas-token", null);
 
         // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
