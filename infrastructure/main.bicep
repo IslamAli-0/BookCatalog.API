@@ -105,18 +105,14 @@ resource bookAssetsContainer 'Microsoft.Storage/storageAccounts/blobServices/con
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
 
 // 7. Azure Container App (Target deployed by deploy.yml)
+// Express environments (Azure for Students) do not support System-Assigned Managed Identity.
+// Configuration is injected via environment variables (connection strings).
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
-  identity: {
-    type: 'SystemAssigned'
-  }
   properties: {
     managedEnvironmentId: containerAppEnv.id
     configuration: {
-      // Note: activeRevisionsMode: 'Multiple' requires a Workload Profile environment,
-      // which is not available on Azure for Students subscriptions.
-      // Express environments use Single revision mode by default.
       ingress: {
         external: true
         targetPort: 8080
@@ -172,41 +168,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
   }
 }
 
-// 9. Grant the Container App permission to read secrets (Key Vault Secrets User)
-resource keyVaultContainerAppRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, containerApp.id, '4633458b-17de-408a-b874-0445c86b69e6')
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6' // Key Vault Secrets User
-    )
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// 10. Grant the Container App's Managed Identity access to the Storage Account
-//     Role: Storage Blob Data Contributor (can read/write blobs — useful for MI-based uploads)
-resource storageBlobContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, containerApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor
-    )
-    principalId: containerApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// 11. Outputs for CI/CD Pipeline & Orchestration
+// 9. Outputs for CI/CD Pipeline & Orchestration
 output containerAppName string = containerApp.name
 output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = sqlDb.name
 output keyVaultName string = keyVault.name
-output containerAppPrincipalId string = containerApp.identity.principalId
 output storageAccountName string = storageAccount.name
 output storageBlobEndpoint string = storageAccount.properties.primaryEndpoints.blob
