@@ -47,16 +47,25 @@ public class BooksController(
     /// A second request with the same key returns the cached 201 response without creating a duplicate.
     /// </summary>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateBookRequest request)
+    public async Task<IActionResult> Create(
+        [FromBody] CreateBookRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey = null)
     {
         // ── 1. Require the Idempotency-Key header ──────────────────────────────
-        if (!Request.Headers.TryGetValue("Idempotency-Key", out var keyValues) ||
-            string.IsNullOrWhiteSpace(keyValues.FirstOrDefault()))
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            if (Request.Headers.TryGetValue("Idempotency-Key", out var headerVals))
+            {
+                idempotencyKey = headerVals.FirstOrDefault();
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
             return BadRequest(new { message = "The 'Idempotency-Key' header is required for POST /api/books." });
         }
 
-        var idempotencyKey = keyValues.First()!.Trim();
+        idempotencyKey = idempotencyKey.Trim();
 
         // ── 2. Check cache: has this key been processed before? ───────────────
         var existing = await db.IdempotencyRecords
