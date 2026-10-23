@@ -14,7 +14,8 @@ namespace BookCatalog.API.Controllers;
 public class BooksController(
     IBookService bookService,
     ApplicationDbContext db,
-    IBlobService blobService) : ControllerBase
+    IBlobService blobService,
+    ILogger<BooksController> logger) : ControllerBase
 {
     private const string BookAssetsContainer = "book-assets";
 
@@ -23,19 +24,24 @@ public class BooksController(
     // ─────────────────────────────────────────────────────────────────────────
 
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] BookQueryParameters parameters)
+    public async Task<IActionResult> GetAll(
+        [FromQuery] BookQueryParameters parameters,
+        CancellationToken cancellationToken = default)
     {
         var pagedResult = await bookService.GetAllBooksAsync(parameters);
         return Ok(pagedResult);
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetById(Guid id)
+    public async Task<IActionResult> GetById(
+        Guid id,
+        CancellationToken cancellationToken = default)
     {
         var book = await bookService.GetBookByIdAsync(id);
 
         if (book == null)
         {
+            logger.LogWarning("Book with ID {BookId} was not found.", id);
             return NotFound(new { message = $"Book with ID {id} was not found." });
         }
 
@@ -49,7 +55,8 @@ public class BooksController(
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreateBookRequest request,
-        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey = null)
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey = null,
+        CancellationToken cancellationToken = default)
     {
         // ── 1. Require the Idempotency-Key header ──────────────────────────────
         if (string.IsNullOrWhiteSpace(idempotencyKey))
@@ -70,14 +77,17 @@ public class BooksController(
         // ── 2. Check cache: has this key been processed before? ───────────────
         var existing = await db.IdempotencyRecords
             .AsNoTracking()
-            .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey);
+            .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
         if (existing != null)
         {
-            // Replay the original response byte-for-byte.
+            logger.LogInformation("Idempotency cache hit for key {IdempotencyKey}. Replaying cached response.", idempotencyKey);
             var cached = JsonSerializer.Deserialize<BookResponse>(existing.ResponseJson);
             return StatusCode(existing.StatusCode, cached);
         }
+
+        logger.LogInformation("Idempotency cache miss for key {IdempotencyKey}. Creating book with ISBN {ISBN} and title {Title}",
+            idempotencyKey, request.ISBN, request.Title);
 
         // ── 3. Atomic creation: Book + IdempotencyRecord in one transaction ───
         // Use CreateExecutionStrategy() to support user-initiated transactions with EnableRetryOnFailure
@@ -87,15 +97,16 @@ public class BooksController(
         {
             var cachedRecord = await db.IdempotencyRecords
                 .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey);
+                .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
             if (cachedRecord != null)
             {
+                logger.LogInformation("Idempotency cache hit (in transaction) for key {IdempotencyKey}.", idempotencyKey);
                 var cached = JsonSerializer.Deserialize<BookResponse>(cachedRecord.ResponseJson);
                 return (cached!, false);
             }
 
-            await using var tx = await db.Database.BeginTransactionAsync();
+            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
             try
             {
                 var createdBook = await bookService.CreateBookAsync(request);
@@ -110,8 +121,8 @@ public class BooksController(
                 };
 
                 db.IdempotencyRecords.Add(record);
-                await db.SaveChangesAsync();
-                await tx.CommitAsync();
+                await db.SaveChangesAsync(cancellationToken);
+                await tx.CommitAsync(cancellationToken);
 
                 return (createdBook, true);
             }
@@ -119,11 +130,12 @@ public class BooksController(
                 when (ex.InnerException?.Message.Contains("unique", StringComparison.OrdinalIgnoreCase) == true ||
                       ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true)
             {
-                await tx.RollbackAsync();
+                logger.LogWarning("Idempotency race/conflict detected for key {IdempotencyKey}. Replaying winner response.", idempotencyKey);
+                await tx.RollbackAsync(cancellationToken);
 
                 var raceRecord = await db.IdempotencyRecords
                     .AsNoTracking()
-                    .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey);
+                    .FirstOrDefaultAsync(r => r.IdempotencyKey == idempotencyKey, cancellationToken);
 
                 var cached = JsonSerializer.Deserialize<BookResponse>(raceRecord!.ResponseJson);
                 return (cached!, false);
@@ -132,6 +144,7 @@ public class BooksController(
 
         if (isNewRecord)
         {
+            logger.LogInformation("Book {BookId} successfully created with ISBN {ISBN}", bookResult.Id, bookResult.ISBN);
             return CreatedAtAction(nameof(GetById), new { id = bookResult.Id }, bookResult);
         }
 
@@ -139,28 +152,39 @@ public class BooksController(
     }
 
     [HttpPut("{id:guid}")]
-    public async Task<IActionResult> Update(Guid id, [FromBody] UpdateBookRequest request)
+    public async Task<IActionResult> Update(
+        Guid id,
+        [FromBody] UpdateBookRequest request,
+        CancellationToken cancellationToken = default)
     {
+        logger.LogInformation("Updating book {BookId}", id);
         var updatedBook = await bookService.UpdateBookAsync(id, request);
 
         if (updatedBook == null)
         {
+            logger.LogWarning("Failed to update. Book with ID {BookId} was not found.", id);
             return NotFound(new { message = $"Book with ID {id} was not found." });
         }
 
+        logger.LogInformation("Book {BookId} successfully updated", id);
         return Ok(updatedBook);
     }
 
     [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> Delete(Guid id)
+    public async Task<IActionResult> Delete(
+        Guid id,
+        CancellationToken cancellationToken = default)
     {
+        logger.LogInformation("Deleting book {BookId}", id);
         var deleted = await bookService.DeleteBookAsync(id);
 
         if (!deleted)
         {
+            logger.LogWarning("Failed to delete. Book with ID {BookId} was not found.", id);
             return NotFound(new { message = $"Book with ID {id} was not found." });
         }
 
+        logger.LogInformation("Book {BookId} successfully deleted", id);
         return NoContent(); // 204 No Content
     }
 
@@ -186,6 +210,8 @@ public class BooksController(
         {
             return BadRequest(new { message = "No file was supplied or the file is empty." });
         }
+
+        logger.LogInformation("Uploading server-side asset {AssetType} for book {BookId}", assetType, id);
 
         // Determine blob path and which Book field to update.
         var extension = Path.GetExtension(file.FileName);
@@ -216,6 +242,8 @@ public class BooksController(
             book.CoverImageUrl = uri.ToString();
 
         await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation("Server asset {AssetType} for book {BookId} uploaded successfully to {BlobPath}", assetType, id, blobPath);
 
         return Ok(new
         {
@@ -261,6 +289,9 @@ public class BooksController(
         };
 
         const int validForMinutes = 15;
+        logger.LogInformation("Generating SAS upload token for book {BookId}, container {Container}, blob {BlobPath}",
+            id, BookAssetsContainer, blobPath);
+
         var sasUri = blobService.GenerateSasUri(BookAssetsContainer, blobPath, validForMinutes);
 
         return Ok(new

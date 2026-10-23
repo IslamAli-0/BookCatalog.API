@@ -381,4 +381,8 @@ CONFIG_VALIDATION_STUDY_GUIDE.md
 
 # Package and archive files
 *.zip
-*.tar.gz
+*.tar.gz
+
+# Documentation / runbooks (local only)
+docs/
+

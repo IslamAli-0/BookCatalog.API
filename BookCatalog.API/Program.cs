@@ -1,4 +1,8 @@
+using System.Diagnostics;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
+using Azure.Storage.Blobs;
 using BookCatalog.API.Handlers;
+using BookCatalog.API.Middleware;
 using BookCatalog.API.Options;
 using BookCatalog.Core.Interfaces;
 using BookCatalog.Core.Models;
@@ -6,88 +10,75 @@ using BookCatalog.Core.Services;
 using BookCatalog.Infrastructure.Data;
 using BookCatalog.Infrastructure.Repositories;
 using BookCatalog.Infrastructure.Services;
-using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Graceful shutdown — give in-flight requests up to 30 seconds to complete
-// when the process receives SIGTERM (e.g., docker compose down, Ctrl+C).
-// Default is 30s in .NET 8+, but we set it explicitly so the intent is documented
-// and won't silently change if defaults shift in a future runtime version.
+// Read graceful shutdown timeout from configuration (default: 30s)
+var shutdownTimeoutSeconds = builder.Configuration.GetValue<int>("ShutdownTimeoutSeconds", 30);
 builder.Services.Configure<HostOptions>(options =>
-    options.ShutdownTimeout = TimeSpan.FromSeconds(30));
+{
+    options.ShutdownTimeout = TimeSpan.FromSeconds(shutdownTimeoutSeconds);
+});
 
-// Configure Serilog for structured JSON logging
-builder.Host.UseSerilog((context, configuration) =>
-    configuration
-        .ReadFrom.Configuration(context.Configuration)
-        .Enrich.FromLogContext()
-        .WriteTo.Console(new Serilog.Formatting.Compact.CompactJsonFormatter()));
+// Configure Serilog from appsettings.json + enrich with environment/correlation
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "BookCatalog.API")
+    .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName));
 
+// Add services to the container.
 builder.Services.AddControllers();
-
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Configuration validation — fail fast at startup if connection string is missing.
-// ValidateDataAnnotations checks [Required] on DatabaseOptions properties.
-// ValidateOnStart runs the validation before the first request, not lazily on first use.
-// Without this, a missing connection string causes a cryptic NullReferenceException
-// on the first DB call instead of a clear startup error.
-builder.Services.AddOptions<DatabaseOptions>()
-    .BindConfiguration(DatabaseOptions.SectionName)
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
+// Database Context (SQL Server with Resilience & Retries)
+// EnableRetryOnFailure handles transient network drops and Azure SQL Serverless cold starts (5 attempts, max 30s delay).
+// CommandTimeout(60) ensures long-running queries fail gracefully rather than locking connections forever.
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-// Read the connection string for DbContext and health check registration
-var connectionString = builder.Configuration
-    .GetSection(DatabaseOptions.SectionName)
-    .Get<DatabaseOptions>()?
-    .DefaultConnection
-    ?? builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? string.Empty;
-
-// EF Core — register the DbContext with the SQL Server provider
-// EnableRetryOnFailure: automatically retries transient errors (connection drops, timeouts,
-// deadlocks) up to 3 times with exponential back-off before surfacing as an error.
-// Only safe because all writes are wrapped in explicit transactions or are single-operation;
-// EF Core tracks whether a retry is inside a user-managed transaction and skips auto-retry
-// in that case to avoid retrying non-idempotent committed work.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(
-        connectionString,
-        sqlOptions => sqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorNumbersToAdd: null)));
+    options.UseSqlServer(connectionString,
+        sqlServerOptionsAction: sqlOptions =>
+        {
+            sqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null);
+            sqlOptions.CommandTimeout(60);
+        }));
 
-// Scoped lifetime — DbContext is scoped, so the repository must be too
+// Repositories & Services
 builder.Services.AddScoped<IBookRepository, BookRepository>();
-
 builder.Services.AddScoped<IBookService, BookService>();
-
 builder.Services.AddScoped<ILendingRepository, LendingRepository>();
 builder.Services.AddScoped<ILendingService, LendingService>();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-// Health Checks
-// /health/live  — is the process running? (no DB check, used by container orchestrators for restarts)
-// /health/ready — can the service do its job? (includes DB reachability, used to gate traffic)
+// ── Health Checks ────────────────────────────────────────────────────────────
+// /health/live  — Fast lightweight "self" check (no DB dependency, prevents container restart loops)
+// /health/ready — Checks database readiness (tagged "ready" — gates traffic routing)
 builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["live"])
     .AddSqlServer(
         connectionString: connectionString,
+        healthQuery: "SELECT 1;",
         name: "sql-server",
+        timeout: TimeSpan.FromSeconds(10),
         tags: ["ready"]);
 
-// ─── Azure Blob Storage ────────────────────────────────────────────────────────
-// BlobServiceClient is registered as Singleton: it is thread-safe and designed
-// to be shared. The connection string is read from AzureBlobStorage:ConnectionString
-// (set as an env var in production: AzureBlobStorage__ConnectionString).
+// ── Azure Blob Storage ───────────────────────────────────────────────────────
 var blobConnectionString = builder.Configuration["AzureBlobStorage:ConnectionString"];
 if (!string.IsNullOrWhiteSpace(blobConnectionString))
 {
@@ -95,39 +86,61 @@ if (!string.IsNullOrWhiteSpace(blobConnectionString))
 }
 else
 {
-    // Fallback for local development without Azure Storage:
-    // use Azurite (local emulator) or any account you set in appsettings.Development.json.
-    // We register a Azurite default endpoint so the service compiles and starts even when
-    // the env-var is absent; SAS generation will still fail without real credentials.
-    builder.Services.AddSingleton(new BlobServiceClient(
-        "UseDevelopmentStorage=true"));
+    builder.Services.AddSingleton(new BlobServiceClient("UseDevelopmentStorage=true"));
 }
 
 builder.Services.AddScoped<IBlobService, BlobService>();
 
+// ── Request Timeouts (ASP.NET Core) ─────────────────────────────────────────
+// Global 30-second server-side timeout so slow downstream calls do not hold threads indefinitely.
+builder.Services.AddRequestTimeouts(options =>
+{
+    options.DefaultPolicy = new Microsoft.AspNetCore.Http.Timeouts.RequestTimeoutPolicy
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
+});
+
+// ── OpenTelemetry — Distributed Tracing ─────────────────────────────────────
+// Uses Azure Monitor OpenTelemetry when APPLICATIONINSIGHTS_CONNECTION_STRING is present.
+// Gracefully falls back to local OTel tracing without exporter during local dev/tests.
+var appInsightsConnStr = builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
+if (!string.IsNullOrWhiteSpace(appInsightsConnStr))
+{
+    builder.Services.AddOpenTelemetry()
+        .UseAzureMonitor(options =>
+        {
+            options.ConnectionString = appInsightsConnStr;
+        })
+        .WithTracing(tracing =>
+        {
+            tracing.AddEntityFrameworkCoreInstrumentation(o =>
+            {
+                o.SetDbStatementForText = true;
+                o.SetDbStatementForStoredProcedure = true;
+            });
+        });
+}
+else
+{
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(r => r.AddService("BookCatalog.API"))
+        .WithTracing(tracing => tracing
+            .AddAspNetCoreInstrumentation(o =>
+            {
+                o.Filter = ctx =>
+                    !ctx.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase);
+            })
+            .AddHttpClientInstrumentation()
+            .AddEntityFrameworkCoreInstrumentation());
+}
+
 var app = builder.Build();
 
-// Auto-apply pending EF Core migrations on startup (required for Docker one-command setup)
+// ── Startup: apply pending EF Core migrations / seed dev data ───────────────
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    // var maxRetries = 5;
-    // for (int retry = 1; retry <= maxRetries; retry++)
-    // {
-    //     try
-    //     {
-    //         await context.Database.MigrateAsync();
-    //         break;
-    //     }
-    //     catch (Exception ex)
-    //     {
-    //         if (retry == maxRetries)
-    //         {
-    //             throw new Exception($"Failed to apply migrations after {maxRetries} attempts.", ex);
-    //         }
-    //         await Task.Delay(2000);
-    //     }
-    // }
 
     // Seed Data for Authors and Users
     if (app.Environment.IsDevelopment())
@@ -137,6 +150,7 @@ using (var scope = app.Services.CreateScope())
             context.Authors.Add(new Author { Id = Guid.Parse("11111111-1111-1111-1111-111111111111"), Name = "Test Author" });
             await context.SaveChangesAsync();
         }
+
         if (!await context.Users.AnyAsync())
         {
             context.Users.Add(new User { Id = Guid.Parse("22222222-2222-2222-2222-222222222222"), FullName = "Test User", Email = "test@user.com" });
@@ -144,46 +158,56 @@ using (var scope = app.Services.CreateScope())
         }
 
         // ── Seed sample blob assets ──────────────────────────────────────────
-        // Upload a placeholder cover image and a placeholder PDF so the
-        // container has working test assets out of the box in Development.
         try
         {
             var blobService = scope.ServiceProvider.GetRequiredService<IBlobService>();
             const string container = "book-assets";
 
-            // Sample cover (1x1 white JPEG — minimal valid JFIF)
-            var coverBytes = Convert.FromBase64String(
-                "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U" +
-                "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAARCAABAAEDASIA" +
-                "AhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAABgUE/8QAIRAAAQMEAwEBAAAAAAAAAAAAAQID" +
-                "BAURBhIhMVH/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/a" +
-                "AAwDAQACEQMRAD8AsAAZAAAAAH//2Q==");
-            await using var coverStream = new MemoryStream(coverBytes);
-            await blobService.UploadAsync(container, "samples/sample-cover.jpg", coverStream, "image/jpeg");
+            // Upload a minimal 1x1 transparent PNG as sample cover
+            var pngBytes = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+                0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+                0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+                0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+                0x42, 0x60, 0x82
+            };
+            await using var pngStream = new MemoryStream(pngBytes);
+            await blobService.UploadAsync(container, "samples/sample-cover.png", pngStream, "image/png");
 
-            // Sample PDF (minimal valid 1-page PDF)
+            // Upload a minimal valid PDF
             var pdfBytes = System.Text.Encoding.ASCII.GetBytes(
                 "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
                 "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
-                "3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n" +
-                "xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n" +
-                "0000000058 00000 n\n0000000115 00000 n\n" +
-                "trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF");
+                "3 0 obj<</Type/Page/MediaBox[0 0 3 3]>>endobj\n" +
+                "xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000096 00000 n \n" +
+                "trailer<</Size 4/Root 1 0 R>>\nstartxref\n147\n%%EOF");
             await using var pdfStream = new MemoryStream(pdfBytes);
             await blobService.UploadAsync(container, "samples/sample-book.pdf", pdfStream, "application/pdf");
 
-            Log.Information("Sample blob assets seeded to container '{Container}'.", container);
+            Log.Information("Sample blob assets seeded to container '{Container}'", container);
         }
         catch (Exception ex)
         {
             // Do not crash startup if Azurite is not running locally — just warn.
-            Log.Warning(ex, "Could not seed sample blob assets (Azure Storage may not be reachable locally).");
+            Log.Warning(ex, "Could not seed sample blob assets (Azure Storage may not be reachable locally)");
         }
     }
 }
 
-// Must go before controllers so it can catch their errors.
+// ── Middleware pipeline ───────────────────────────────────────────────────────
+// Must go before controllers so it can catch their exceptions.
 app.UseExceptionHandler();
+
+// Request timeouts — must be early in the pipeline before controllers execute.
+app.UseRequestTimeouts();
+
+// Correlation ID — echo X-Correlation-ID + trace-id on every response.
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -191,16 +215,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Liveness: just "is the process alive?" — no dependency checks, always fast.
-// Explicitly exclude "ready" tagged checks (SQL Server) so this stays true even when DB is down.
-// Used by container orchestrators to decide whether to RESTART the container.
+// Liveness: "is the process alive?" — runs fast "self" check, no DB dependency.
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
-    Predicate = hc => !hc.Tags.Contains("ready")
+    Predicate = hc => hc.Tags.Contains("live")
 });
 
-// Readiness: "can the service actually do its job?" — only runs checks tagged "ready" (SQL Server).
-// Used by orchestrators to decide whether to SEND TRAFFIC to this instance.
+// Readiness: "can the service do work?" — checks "ready" tagged checks (SQL Server).
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = hc => hc.Tags.Contains("ready")
@@ -208,23 +229,22 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 
 app.UseHttpsRedirection();
 
-// Use Serilog for request logging (correlates logs with requests)
+// Serilog request logging — correlates HTTP request/response in structured logs.
 app.UseSerilogRequestLogging();
 
 app.UseAuthorization();
 
 app.MapControllers();
 
-// Log application lifecycle events so graceful shutdown is verifiable in the logs.
-// After docker compose down or Ctrl+C, you should see:
-//   "Application is shutting down..." followed by "Application stopped."
-// If an in-flight request was being processed, its response will complete before "stopped."
+// ── Application lifecycle logging ────────────────────────────────────────────
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 lifetime.ApplicationStarted.Register(() =>
-    Log.Information("Application started. Graceful shutdown timeout: {ShutdownTimeout}s", 30));
+    Log.Information("Application started. Graceful shutdown timeout: {ShutdownTimeout}s", shutdownTimeoutSeconds));
 lifetime.ApplicationStopping.Register(() =>
     Log.Information("Application is shutting down. Completing in-flight requests..."));
 lifetime.ApplicationStopped.Register(() =>
     Log.Information("Application stopped. All in-flight requests completed."));
 
 app.Run();
+
+public partial class Program { }
