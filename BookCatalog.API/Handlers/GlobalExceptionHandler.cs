@@ -89,7 +89,7 @@ public class GlobalExceptionHandler(
                 Title = title,
                 Detail = detail,
                 Instance = httpContext.Request.Path,
-                Extensions = { ["traceId"] = httpContext.TraceIdentifier }
+                Extensions = { ["traceId"] = System.Diagnostics.Activity.Current?.Id ?? httpContext.TraceIdentifier }
             }
         });
     }
